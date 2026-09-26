@@ -1,15 +1,18 @@
+
 {
-  "name": "whatsapp-bot-hbot",
+  "name": "whatsapp-bot",
   "version": "1.0.0",
-  "type": "module",
+  "description": "Bot WhatsApp Modérateur & Programme",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.12",
     "@hapi/boom": "^10.0.1",
-    "qrcode-terminal": "^0.12.0",
-    "pino": "^9.0.0"
+    "@whiskeysockets/baileys": "^6.7.12",
+    "express": "^4.19.2",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }
