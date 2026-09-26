@@ -6,8 +6,27 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import pino from 'pino';
+import express from 'express';
 
-// Base de données simplifiée pour les programmes (Peut être remplacée par Supabase ou JSON)
+// ==========================================
+// 🌐 SERVEUR HTTP POUR RENDER
+// ==========================================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('🤖 Bot WhatsApp Modérateur est actif et en cours d\'exécution !');
+});
+
+app.listen(PORT, () => {
+  console.log(`🌍 Serveur HTTP à l'écoute sur le port ${PORT}`);
+});
+
+// ==========================================
+// 🤖 CONFIGURATION DU BOT WHATSAPP
+// ==========================================
+
+// Base de données simplifiée pour les programmes
 const programmes = {
   mois: "📅 *Programme du mois :*\n• Semaine 1 : Réunion d'ouverture\n• Semaine 2 : Formation technique\n• Semaine 3 : Évaluation intermédiaire\n• Semaine 4 : Bilan mensuel",
   annee: "📅 *Programme Annuel 2026 :*\n• T1 : Phase de planification\n• T2 : Exécution des projets\n• T3 : Audit & Optimisation\n• T4 : Clôture & Festivités"
@@ -24,23 +43,28 @@ async function connectToWhatsApp() {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: false
+    printQRInTerminal: true // Permet d'afficher le QR Code dans les logs Render
   });
 
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
+    
     if (qr) {
-      console.log('Scannez ce QR code :');
+      console.log('📱 SCANNEZ CE QR CODE DANS VOS LOGS RENDER :');
       qrcode.generate(qr, { small: true });
     }
+    
     if (connection === 'close') {
       const shouldReconnect =
         (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) connectToWhatsApp();
+      console.log('Connexion fermée. Reconnexion en cours...', shouldReconnect);
+      if (shouldReconnect) {
+        connectToWhatsApp();
+      }
     } else if (connection === 'open') {
-      console.log('✅ Bot Administrateur & Modérateur connecté !');
+      console.log('✅ Bot Administrateur & Modérateur connecté avec succès !');
     }
   });
 
@@ -63,7 +87,7 @@ async function connectToWhatsApp() {
       const lowerText = textMessage.trim().toLowerCase();
 
       // ==========================================
-      // 🛡️ SECTION 1 : AUTO-MODÉRATION (GROUPS)
+      // 🛡️ SECTION 1 : AUTO-MODÉRATION (GROUPE)
       // ==========================================
       if (isGroup) {
         try {
@@ -98,17 +122,16 @@ async function connectToWhatsApp() {
               mentions: [sender]
             });
 
-            // Expulsion si mot interdit grave ou récidive
+            // Expulsion si mot interdit grave
             if (containsBadWord && botIsAdmin) {
               await sock.sendMessage(remoteJid, {
                 text: `🚫 Expulsion de @${sender.split('@')[0]} pour non-respect des règles.`,
                 mentions: [sender]
               });
               
-              // Action d'expulsion du groupe
               await sock.groupParticipantsUpdate(remoteJid, [sender], 'remove');
             }
-            continue; // Stopper le traitement
+            continue;
           }
         } catch (err) {
           console.error('Erreur lors de la modération du groupe :', err);
@@ -116,7 +139,7 @@ async function connectToWhatsApp() {
       }
 
       // ==========================================
-      // 📅 SECTION 2 : COMMANDES DE PROGRAMME
+      // 📅 SECTION 2 : COMMANDES DU PROGRAMME
       // ==========================================
 
       // Afficher le programme du mois
@@ -129,7 +152,7 @@ async function connectToWhatsApp() {
         await sock.sendMessage(remoteJid, { text: programmes.annee }, { quoted: msg });
       }
 
-      // Mise à jour du programme ( réservé aux administrateurs )
+      // Mise à jour du programme (réservé aux administrateurs)
       else if (lowerText.startsWith('!setprogramme ')) {
         if (!isGroup) continue;
 
