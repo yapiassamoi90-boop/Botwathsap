@@ -45,15 +45,14 @@ function getMonthlyProgramText() {
 • *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
 }
 
-// Fonction pour récupérer le rapport des cotisations avec un timeout de 15 secondes
+// Fonction pour récupérer le rapport des cotisations depuis la collection 'members'
 async function getCotisationsReport() {
     try {
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
         );
 
-        const fetchPromise = db.collection("app_security").get();
-
+        const fetchPromise = db.collection("members").get();
         const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
         
         const now = new Date();
@@ -62,13 +61,16 @@ async function getCotisationsReport() {
 
         snapshot.forEach((doc) => {
             const data = doc.data();
-            const isPaid = data.paidUntil && new Date(data.paidUntil) > now;
+            const memberName = data.name || data.nom || "Membre";
+            const paidDate = data.paidUntil || data.dateFin || data.expiresAt;
+            
+            const isPaid = paidDate && new Date(paidDate) > now;
             
             if (isPaid) {
-                const dateFormatted = new Date(data.paidUntil).toLocaleDateString('fr-FR');
-                paidMembers.push(`✅ *${data.name}* (jusqu'au ${dateFormatted})`);
+                const dateFormatted = new Date(paidDate).toLocaleDateString('fr-FR');
+                paidMembers.push(`✅ *${memberName}* (jusqu'au ${dateFormatted})`);
             } else {
-                pendingMembers.push(`⏳ ${data.name}`);
+                pendingMembers.push(`⏳ ${memberName}`);
             }
         });
 
