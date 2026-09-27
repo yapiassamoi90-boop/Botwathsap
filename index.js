@@ -28,7 +28,7 @@ const verses = [
     { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
     { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
     { verse: "Ésaïe 40:31", text: "Mais ceux qui s'confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
-    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes _{\text}_ et il aplanira tes sentiers." },
     { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
     { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
     { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
@@ -82,8 +82,8 @@ async function getCotisationsReport() {
 
         return response;
     } catch (error) {
-        console.error("Erreur Firebase:", error);
-        return "❌ Désolé, une erreur est survenue lors de la récupération des cotisations.";
+        console.error("Erreur Firebase détaillée:", error);
+        return `❌ Erreur Firebase : ${error.message}`;
     }
 }
 
