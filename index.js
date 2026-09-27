@@ -10,9 +10,12 @@ const PORT = process.env.PORT || 3000;
 // Configuration du groupe WhatsApp
 const GROUP_ID = '22567647800-1546850208@g.us';
 
-// Initialisation de Firebase Admin
+// Initialisation de Firebase Admin avec le fichier secret de Render
+const serviceAccount = require('./serviceAccountKey.json');
+
 if (!admin.apps.length) {
     admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
         projectId: "registre-eglise"
     });
 }
@@ -28,7 +31,7 @@ const verses = [
     { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
     { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
     { verse: "Ésaïe 40:31", text: "Mais ceux qui s'confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
-    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes'_{\text{et il aplanira tes sentiers." },
     { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
     { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
     { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
