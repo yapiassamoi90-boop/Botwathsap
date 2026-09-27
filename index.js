@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 // Configuration du groupe WhatsApp
 const GROUP_ID = '22567647800-1546850208@g.us';
 
-// Initialisation de Firebase Admin (sans clé privée nécessaire pour la lecture Firestore publique/standard)
+// Initialisation de Firebase Admin
 if (!admin.apps.length) {
     admin.initializeApp({
         projectId: "registre-eglise"
@@ -164,8 +164,8 @@ async function connectToWhatsApp() {
             await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
         }
 
-        // Commande qui est hbot
-        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot')) {
+        // Commande de présentation
+        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot') || lowerText.includes('qui es tu hbot') || lowerText === 'hbot') {
             const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel du groupe.*
 
 📌 *Mes fonctions :*
@@ -186,11 +186,7 @@ Que le Seigneur vous bénisse ! 🙏✨`;
     });
 }
 
-// -------------------------------------------------------------
 // TÂCHES AUTOMATIQUES (CRON JOBS)
-// -------------------------------------------------------------
-
-// 1. Méditation quotidienne à 6h30
 cron.schedule('30 6 * * *', async () => {
     if (isConnected && sock) {
         const randomVerse = verses[Math.floor(Math.random() * verses.length)];
@@ -210,7 +206,6 @@ Que le Seigneur vous bénisse et vous guide tout au long de cette journée ! �
     }
 }, { timezone: "Africa/Abidjan" });
 
-// 2. Veillée de Répétition (1er et Dernier Vendredi à 14h00)
 cron.schedule('0 14 * * 5', async () => {
     const today = new Date();
     if (isFirstOrLastFriday(today) && isConnected && sock) {
@@ -229,7 +224,6 @@ Venez nombreux afin de préparer nos cœurs et nos voix pour le service du Seign
     }
 }, { timezone: "Africa/Abidjan" });
 
-// 3. Rappel du Programme (Vendredi et Samedi à 14h00)
 cron.schedule('0 14 * * 5,6', async () => {
     if (isConnected && sock) {
         const programText = `🔔 *RAPPEL DU PROGRAMME DU WEEK-END* ⛪\n\n` + getMonthlyProgramText();
@@ -242,7 +236,6 @@ cron.schedule('0 14 * * 5,6', async () => {
     }
 }, { timezone: "Africa/Abidjan" });
 
-// 4a. Rappel Cotisation, Uniforme & Unité (Samedi à 16h00)
 cron.schedule('0 16 * * 6', async () => {
     if (isConnected && sock) {
         try {
@@ -254,7 +247,6 @@ cron.schedule('0 16 * * 6', async () => {
     }
 }, { timezone: "Africa/Abidjan" });
 
-// 4b. Rappel Cotisation, Uniforme & Unité (Dimanche à 11h30)
 cron.schedule('30 11 * * 0', async () => {
     if (isConnected && sock) {
         try {
