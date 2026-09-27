@@ -45,48 +45,46 @@ function getMonthlyProgramText() {
 • *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
 }
 
-// Fonction pour récupérer le rapport des cotisations depuis la collection 'members'
+// Fonction pour récupérer le rapport des cotisations depuis l'historique (transactions)
 async function getCotisationsReport() {
     try {
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
         );
 
-        const fetchPromise = db.collection("members").get();
+        // On interroge la collection 'transactions' pour récupérer les derniers paiements
+        const fetchPromise = db.collection("transactions").orderBy("timestamp", "desc").limit(5).get();
         const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
         
-        const now = new Date();
-        let paidMembers = [];
-        let pendingMembers = [];
+        let recentPayments = [];
 
         snapshot.forEach((doc) => {
             const data = doc.data();
-            const memberName = data.name || data.nom || "Membre";
-            const paidDate = data.paidUntil || data.dateFin || data.expiresAt;
+            const memberName = data.name || data.memberName || data.nom || "Membre";
+            const amount = data.amount || data.montant || "500";
+            const dateVal = data.timestamp || data.date;
             
-            const isPaid = paidDate && new Date(paidDate) > now;
-            
-            if (isPaid) {
-                const dateFormatted = new Date(paidDate).toLocaleDateString('fr-FR');
-                paidMembers.push(`✅ *${memberName}* (jusqu'au ${dateFormatted})`);
-            } else {
-                pendingMembers.push(`⏳ ${memberName}`);
+            let dateFormatted = "Récemment";
+            if (dateVal) {
+                // Gestion des timestamps Firestore ou dates classiques
+                const dateObj = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
+                dateFormatted = dateObj.toLocaleString('fr-FR', { 
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
+                });
             }
+            
+            recentPayments.push(`✅ *${memberName}* : +${amount} FCFA _(${dateFormatted})_`);
         });
 
-        let response = `📊 *SUIVI EN TEMPS RÉEL DES COTISATIONS* 🪙\n\n`;
+        let response = `📊 *DERNIERS PAIEMENTS ENREGISTRÉS* 🪙\n\n`;
 
-        if (paidMembers.length > 0) {
-            response += `🟢 *MEMBRES À JOUR (${paidMembers.length}) :*\n` + paidMembers.join('\n') + `\n\n`;
+        if (recentPayments.length > 0) {
+            response += recentPayments.join('\n') + `\n\n`;
         } else {
-            response += `🟢 *MEMBRES À JOUR :* Aucun pour le moment.\n\n`;
+            response += `🟢 Aucun paiement récent enregistré.\n\n`;
         }
 
-        if (pendingMembers.length > 0) {
-            response += `🔴 *EN ATTENTE (${pendingMembers.length}) :*\n` + pendingMembers.join('\n') + `\n\n`;
-        }
-
-        response += `💡 *Rappel :* Cotisation de 100 FCFA/semaine pour nos sorties en studio et moments d'agapé. Merci pour votre fidélité ! 🙏✨`;
+        response += `💡 *Rappel :* Cotisation pour nos sorties en studio et moments d'agapé. Merci pour votre fidélité ! 🙏✨`;
 
         return response;
     } catch (error) {
@@ -104,7 +102,7 @@ Chers membres du groupe musical,
 2. 👔 *Uniformes :* Prenons grand soin de nos tenues et uniformes du groupe afin d'honorer le Seigneur dans la présentation.
 3. 🤝 *Unité :* Demeurons unis, dans l'amour et la fraternité pour le service de Dieu.
 
-💡 *Astuce :* Tapez *!cotisation* pour voir la liste des membres à jour !
+💡 *Astuce :* Tapez *!cotisation* pour voir les derniers paiements enregistrés !
 
 *« Qu'il est doux, qu'il est agréable pour des frères de demeurer ensemble ! »* — *Psaumes 133:1* 🙏✨`;
 
@@ -184,7 +182,7 @@ async function connectToWhatsApp() {
 
 💡 *Commandes disponibles :*
 • Tapez *!programme* pour voir le planning des passages.
-• Tapez *!cotisation* pour voir les membres à jour dans l'application.
+• Tapez *!cotisation* pour voir les derniers versements enregistrés.
 • Tapez *qui est hbot* pour revoir ce message.
 
 Que le Seigneur vous bénisse ! 🙏✨`;
@@ -272,7 +270,7 @@ app.get('/', (req, res) => {
         res.send(`
             <div style="text-align:center; padding:50px; font-family:sans-serif;">
                 <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
-                <p>Hbot1 est actif et synchronisé avec l'application de cotisation Firebase.</p>
+                <p>Hbot1 est actif et synchronisé avec l'historique des transactions Firebase.</p>
             </div>
         `);
     } else if (qrCodeData) {
