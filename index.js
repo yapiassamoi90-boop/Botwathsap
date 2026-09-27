@@ -52,36 +52,45 @@ async function getCotisationsReport() {
             setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
         );
 
-        // On interroge la collection 'transactions' pour récupérer les derniers paiements
-        const fetchPromise = db.collection("transactions").orderBy("timestamp", "desc").limit(5).get();
+        const fetchPromise = db.collection("transactions").get();
         const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
         
         let recentPayments = [];
 
         snapshot.forEach((doc) => {
             const data = doc.data();
-            const memberName = data.name || data.memberName || data.nom || "Membre";
-            const amount = data.amount || data.montant || "500";
-            const dateVal = data.timestamp || data.date;
+            // Récupération de tous les noms de champs possibles
+            const memberName = data.name || data.memberName || data.nom || data.libelle || "Membre";
+            const amount = data.amount || data.montant || data.valeur || "500";
+            const dateVal = data.timestamp || data.date || data.createdAt;
             
             let dateFormatted = "Récemment";
             if (dateVal) {
-                // Gestion des timestamps Firestore ou dates classiques
                 const dateObj = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
-                dateFormatted = dateObj.toLocaleString('fr-FR', { 
-                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
-                });
+                if (!isNaN(dateObj)) {
+                    dateFormatted = dateObj.toLocaleString('fr-FR', { 
+                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
+                    });
+                }
             }
             
-            recentPayments.push(`✅ *${memberName}* : +${amount} FCFA _(${dateFormatted})_`);
+            recentPayments.push({
+                text: `✅ *${memberName}* : +${amount} FCFA _(${dateFormatted})_`,
+                rawDate: dateVal ? (dateVal.toDate ? dateVal.toDate().getTime() : new Date(dateVal).getTime()) : 0
+            });
         });
+
+        // Tri manuel par date du plus récent au plus ancien pour être sûr
+        recentPayments.sort((a, b) => b.rawDate - a.rawDate);
 
         let response = `📊 *DERNIERS PAIEMENTS ENREGISTRÉS* 🪙\n\n`;
 
         if (recentPayments.length > 0) {
-            response += recentPayments.join('\n') + `\n\n`;
+            // On prend les 5 plus récents
+            const top5 = recentPayments.slice(0, 5).map(item => item.text);
+            response += top5.join('\n') + `\n\n`;
         } else {
-            response += `🟢 Aucun paiement récent enregistré.\n\n`;
+            response += `🟢 Aucun paiement récent enregistré dans la base.\n\n`;
         }
 
         response += `💡 *Rappel :* Cotisation pour nos sorties en studio et moments d'agapé. Merci pour votre fidélité ! 🙏✨`;
@@ -89,7 +98,7 @@ async function getCotisationsReport() {
         return response;
     } catch (error) {
         console.error("Erreur Firebase:", error);
-        return "❌ Connexion à Firebase un peu lente, veuillez réessayer dans un instant.";
+        return `❌ Erreur Firebase : ${error.message}`;
     }
 }
 
