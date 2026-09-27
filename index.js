@@ -1,10 +1,9 @@
-0192import makeWASocket, {
+import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import qrcodeTerminal from 'qrcode-terminal';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import express from 'express';
@@ -65,8 +64,8 @@ async function connectToWhatsApp() {
   const sock = makeWASocket({
     version,
     auth: state,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: true
+    logger: pino({ level: 'silent' })
+    // printQRInTerminal a été supprimé ici pour éviter l'erreur dans les logs
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -75,8 +74,8 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('📱 Nouveau QR Code généré');
-      qrcodeTerminal.generate(qr, { small: true });
+      console.log('📱 Nouveau QR Code généré. Allez sur le lien Web Render pour le scanner.');
+      
       // Convertit le QR Code en image Data URL pour la page Web Render
       try {
         currentQrImage = await QRCode.toDataURL(qr);
