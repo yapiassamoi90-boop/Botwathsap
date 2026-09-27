@@ -1,198 +1,298 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion
-} from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import QRCode from 'qrcode';
-import pino from 'pino';
-import express from 'express';
-import cron from 'node-cron';
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const express = require('express');
+const cron = require('node-cron');
+const QRCode = require('qrcode');
+const admin = require('firebase-admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-let currentQrImage = null;
+// Configuration du groupe WhatsApp
+const GROUP_ID = '22567647800-1546850208@g.us';
+
+// Initialisation de Firebase Admin (sans clé privée nécessaire pour la lecture Firestore publique/standard)
+if (!admin.apps.length) {
+    admin.initializeApp({
+        projectId: "registre-eglise"
+    });
+}
+const db = admin.firestore();
+
+let qrCodeData = null;
 let isConnected = false;
-let sockInstance = null; // Stocke la connexion active
+let sock = null;
 
-// ⚠️ REMPLACEZ CET ID PAR L'ID DE VOTRE GROUPE WHATSAPP UNE FOIS OBTENU AVEC !id
-// Exemple : "12036301234567890@g.us"
-const ID_GROUPE_WHATSAPP = "22567647800-1546850208@g.us";
+// Versets pour la méditation matinale de 6h30
+const verses = [
+    { verse: "Josué 1:8", text: "Que ce livre de la loi ne s'éloigne point de ta bouche; médite-le jour et nuit, pour agir fidèlement selon tout ce qui y est écrit; car c'est alors que tu réussiras dans tes entreprises." },
+    { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
+    { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
+    { verse: "Ésaïe 40:31", text: "Mais ceux qui s'confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
+    { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
+    { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
+    { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
+];
 
-// Serveur Web
-app.get('/', async (req, res) => {
-  if (isConnected) {
-    return res.send(`
-      <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
-        <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
-        <p>Le bot WhatsApp est actif et programmateur de rappels.</p>
-      </div>
-    `);
-  }
+// Programme mensuel
+function getMonthlyProgramText() {
+    return `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
 
-  if (currentQrImage) {
-    return res.send(`
-      <div style="text-align:center; font-family:sans-serif; padding-top:30px;">
-        <h2>📱 Scannez ce QR Code avec WhatsApp</h2>
-        <img src="${currentQrImage}" alt="QR Code WhatsApp" style="border: 10px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 280px;" />
-        <p><i>Rafraîchissez la page si le QR code expire.</i></p>
-      </div>
-    `);
-  }
-
-  res.send(`
-    <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
-      <h2>⏳ Génération du QR Code en cours...</h2>
-      <p>Veuillez rafraîchir la page dans quelques secondes.</p>
-    </div>
-  `);
-});
-
-app.listen(PORT, () => {
-  console.log(`🌍 Serveur Web actif sur le port ${PORT}`);
-});
-
-// ==========================================
-// 🤖 PROGRAMME DE L'ÉGLISE
-// ==========================================
-let texteProgrammeMois = `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
-
-📅 *PROGRAMME DE SEPTEMBRE 2026*
-• *06/09/26* : Adoration: Anne | Célébration: Mme M'Bro | 1ère & 2e Offrande: Mme Diby
-• *13/09/26* : Adoration: Nancy | Célébration: Bérénice | 1ère & 2e Offrande: Evodie
-• *20/09/26* : Adoration: Mme M'Bro | Célébration: Anne | 1ère & 2e Offrande: Joanne
-• *27/09/26* : Adoration: Mme Assamoi | Célébration: Nancy | 1ère & 2e Offrande: Anne
-
-📅 *PROGRAMME D'OCTOBRE 2026*
+📅 *PROGRAMME DU MOIS*
 • *04/10/26* : Adoration: Evodie | Célébration: Mme M'Bro | 2e Offrande: Nancy
 • *11/10/26* : Adoration: Bérénice | Célébration: Mme Diallo | 2e Offrande: Marie-Ange
 • *18/10/26* : Adoration: Joanne | Célébration: Nancy | 2e Offrande: Evodie
 • *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
-
-const MOTS_INTERDITS = ['insulte1', 'insulte2', 'arnaque', 'spam'];
-
-// Fonction pour envoyer le rappel automatique
-async function envoyerRappelProgramme() {
-  if (!isConnected || !sockInstance) {
-    console.log("⚠️ Impossible d'envoyer le rappel : le bot n'est pas connecté.");
-    return;
-  }
-
-  if (ID_GROUPE_WHATSAPP === "VOTRE_ID_DE_GROUPE_ICI@g.us") {
-    console.log("⚠️ Veuillez configurer l'ID de votre groupe WhatsApp dans index.js.");
-    return;
-  }
-
-  const messageRappel = `📢 *RAPPEL DU PROGRAMME DE CE DIMANCHE* 📢\n\n${texteProgrammeMois}\n\nQue Dieu vous bénisse ! 🙏`;
-
-  try {
-    await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: messageRappel });
-    console.log("✅ Rappel de programme envoyé au groupe avec succès !");
-  } catch (err) {
-    console.error("❌ Erreur lors de l'envoi du rappel :", err);
-  }
 }
 
-// ⏰ PLANIFICATION (CRON)
-// '0 14 * * 5'  => Tous les Vendredis à 14h00 (Heure d'Abidjan)
-cron.schedule('0 14 * * 5', () => {
-  console.log('⏰ Exécution du rappel du vendredi 14h');
-  envoyerRappelProgramme();
-}, { timezone: "Africa/Abidjan" });
+// Fonction pour récupérer le rapport des cotisations en temps réel sur Firebase
+async function getCotisationsReport() {
+    try {
+        const snapshot = await db.collection("members").get();
+        const now = new Date();
+        
+        let paidMembers = [];
+        let pendingMembers = [];
 
-// '0 14 * * 6'  => Tous les Samedis à 14h00 (Heure d'Abidjan)
-cron.schedule('0 14 * * 6', () => {
-  console.log('⏰ Exécution du rappel du samedi 14h');
-  envoyerRappelProgramme();
-}, { timezone: "Africa/Abidjan" });
+        snapshot.forEach((doc) => {
+            const data = doc.data();
+            const isPaid = data.paidUntil && new Date(data.paidUntil) > now;
+            
+            if (isPaid) {
+                const dateFormatted = new Date(data.paidUntil).toLocaleDateString('fr-FR');
+                paidMembers.push(`✅ *${data.name}* (jusqu'au ${dateFormatted})`);
+            } else {
+                pendingMembers.push(`⏳ ${data.name}`);
+            }
+        });
 
-// ==========================================
-// 🤖 CONNEXION WHATSAPP
-// ==========================================
-async function connectToWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-  const { version } = await fetchLatestBaileysVersion();
+        let response = `📊 *SUIVI EN TEMPS RÉEL DES COTISATIONS* 🪙\n\n`;
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    logger: pino({ level: 'silent' })
-  });
-
-  sockInstance = sock;
-
-  sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      console.log('📱 Nouveau QR Code généré.');
-      try {
-        currentQrImage = await QRCode.toDataURL(qr);
-      } catch (err) {
-        console.error('Erreur génération QR image :', err);
-      }
-    }
-
-    if (connection === 'close') {
-      isConnected = false;
-      const shouldReconnect =
-        (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) connectToWhatsApp();
-    } else if (connection === 'open') {
-      isConnected = true;
-      currentQrImage = null;
-      console.log('✅ Bot connecté avec succès !');
-    }
-  });
-
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-
-    for (const msg of messages) {
-      if (msg.key.fromMe || !msg.message) continue;
-
-      const remoteJid = msg.key.remoteJid;
-      const isGroup = remoteJid.endsWith('@g.us');
-      const sender = msg.key.participant || msg.key.remoteJid;
-
-      const textMessage =
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        msg.message.imageMessage?.caption ||
-        '';
-
-      const lowerText = textMessage.trim().toLowerCase();
-
-      // Commande pour afficher l'ID du groupe
-      if (lowerText === '!id') {
-        await sock.sendMessage(remoteJid, { text: `L'ID de cette discussion est :\n\`${remoteJid}\`` }, { quoted: msg });
-        continue;
-      }
-
-      // Commandes de consultation et de modification du programme
-      if (lowerText === '!programme' || lowerText === '!programme mois') {
-        await sock.sendMessage(remoteJid, { text: texteProgrammeMois }, { quoted: msg });
-      } else if (lowerText.startsWith('!setprogramme ')) {
-        if (!isGroup) continue;
-
-        const groupMetadata = await sock.groupMetadata(remoteJid);
-        const senderIsAdmin = groupMetadata.participants.some(
-          (p) => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin')
-        );
-
-        if (!senderIsAdmin) {
-          await sock.sendMessage(remoteJid, { text: "❌ Seuls les administrateurs peuvent modifier le programme." }, { quoted: msg });
-          continue;
+        if (paidMembers.length > 0) {
+            response += `🟢 *MEMBRES À JOUR (${paidMembers.length}) :*\n` + paidMembers.join('\n') + `\n\n`;
+        } else {
+            response += `🟢 *MEMBRES À JOUR :* Aucun pour le moment.\n\n`;
         }
 
-        texteProgrammeMois = textMessage.replace('!setprogramme ', '').trim();
-        await sock.sendMessage(remoteJid, { text: "✅ Le programme du mois a été mis à jour !" }, { quoted: msg });
-      }
+        if (pendingMembers.length > 0) {
+            response += `🔴 *EN ATTENTE (${pendingMembers.length}) :*\n` + pendingMembers.join('\n') + `\n\n`;
+        }
+
+        response += `💡 *Rappel :* Cotisation de 100 FCFA/semaine pour nos sorties en studio et moments d'agapé. Merci pour votre fidélité ! 🙏✨`;
+
+        return response;
+    } catch (error) {
+        console.error("Erreur Firebase:", error);
+        return "❌ Désolé, une erreur est survenue lors de la récupération des cotisations.";
     }
-  });
 }
 
-connectToWhatsApp();
+// Message de rappel de cotisation pour le samedi et le dimanche
+const cotisationsMessage = `💰 *RAPPEL IMPORTANT & ENCOURAGEMENT* 🎵
+
+Chers membres du groupe musical,
+
+1. 🪙 *Cotisation hebdomadaire :* N'oublions pas notre cotisation de *100 FCFA chaque dimanche*. Cet effort collectif permet de financer nos *sorties en studio* et nos *moments d'agapé* !
+2. 👔 *Uniformes :* Prenons grand soin de nos tenues et uniformes du groupe afin d'honorer le Seigneur dans la présentation.
+3. 🤝 *Unité :* Demeurons unis, dans l'amour et la fraternité pour le service de Dieu.
+
+💡 *Astuce :* Tapez *!cotisation* pour voir la liste des membres à jour !
+
+*« Qu'il est doux, qu'il est agréable pour des frères de demeurer ensemble ! »* — *Psaumes 133:1* 🙏✨`;
+
+// Vérification du 1er et dernier vendredi du mois
+function isFirstOrLastFriday(date) {
+    const day = date.getDate();
+    const month = date.getMonth();
+    const isFirstFriday = day <= 7;
+    const nextWeek = new Date(date);
+    nextWeek.setDate(day + 7);
+    const isLastFriday = nextWeek.getMonth() !== month;
+    return isFirstFriday || isLastFriday;
+}
+
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+
+    sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            qrCodeData = await QRCode.toDataURL(qr);
+            isConnected = false;
+        }
+
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
+            isConnected = false;
+            if (shouldReconnect) {
+                connectToWhatsApp();
+            }
+        } else if (connection === 'open') {
+            isConnected = true;
+            qrCodeData = null;
+            console.log('✅ Bot connecté à WhatsApp !');
+        }
+    });
+
+    // Écoute des messages entrants
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+
+        const remoteJid = msg.key.remoteJid;
+        const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const lowerText = textMessage.trim().toLowerCase();
+
+        // Commande !programme
+        if (lowerText === '!programme') {
+            const programText = getMonthlyProgramText();
+            await sock.sendMessage(remoteJid, { text: programText }, { quoted: msg });
+        }
+
+        // Commande !cotisation
+        if (lowerText === '!cotisation' || lowerText === '!cotisations') {
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            const report = await getCotisationsReport();
+            await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
+        }
+
+        // Commande qui est hbot
+        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot')) {
+            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel du groupe.*
+
+📌 *Mes fonctions :*
+• 📖 *Méditation matinale :* Un verset biblique chaque matin à 06h30.
+• 🔔 *Rappels du week-end :* Envoi du programme les vendredis et samedis à 14h00.
+• 🌙 *Veillées de répétition :* Rappel les 1er et derniers vendredis du mois à 14h00.
+• 💰 *Cotisation & Unité :* Rappels les samedis à 16h00 et dimanches à 11h30.
+
+💡 *Commandes disponibles :*
+• Tapez *!programme* pour voir le planning des passages.
+• Tapez *!cotisation* pour voir les membres à jour dans l'application.
+• Tapez *qui est hbot* pour revoir ce message.
+
+Que le Seigneur vous bénisse ! 🙏✨`;
+
+            await sock.sendMessage(remoteJid, { text: presentationText }, { quoted: msg });
+        }
+    });
+}
+
+// -------------------------------------------------------------
+// TÂCHES AUTOMATIQUES (CRON JOBS)
+// -------------------------------------------------------------
+
+// 1. Méditation quotidienne à 6h30
+cron.schedule('30 6 * * *', async () => {
+    if (isConnected && sock) {
+        const randomVerse = verses[Math.floor(Math.random() * verses.length)];
+        const meditationMessage = `📖 *MÉDITATION DU MATIN* ☀️
+
+*« ${randomVerse.text} »*
+— *${randomVerse.verse}*
+
+Que le Seigneur vous bénisse et vous guide tout au long de cette journée ! 🙏✨`;
+
+        try {
+            await sock.sendMessage(GROUP_ID, { text: meditationMessage });
+            console.log('✅ Méditation envoyée à 6h30');
+        } catch (err) {
+            console.error('Erreur méditation:', err);
+        }
+    }
+}, { timezone: "Africa/Abidjan" });
+
+// 2. Veillée de Répétition (1er et Dernier Vendredi à 14h00)
+cron.schedule('0 14 * * 5', async () => {
+    const today = new Date();
+    if (isFirstOrLastFriday(today) && isConnected && sock) {
+        const veilléeMessage = `🌙 *RAPPEL : VEILLÉE DE RÉPÉTITION CE SOIR !* 🎵
+
+Chers frères et sœurs, nous vous rappelons que nous avons notre *veillée de répétition* ce soir.
+
+Venez nombreux afin de préparer nos cœurs et nos voix pour le service du Seigneur ! 🙏🎶`;
+
+        try {
+            await sock.sendMessage(GROUP_ID, { text: veilléeMessage });
+            console.log('✅ Rappel de veillée envoyé');
+        } catch (err) {
+            console.error('Erreur rappel veillée:', err);
+        }
+    }
+}, { timezone: "Africa/Abidjan" });
+
+// 3. Rappel du Programme (Vendredi et Samedi à 14h00)
+cron.schedule('0 14 * * 5,6', async () => {
+    if (isConnected && sock) {
+        const programText = `🔔 *RAPPEL DU PROGRAMME DU WEEK-END* ⛪\n\n` + getMonthlyProgramText();
+        try {
+            await sock.sendMessage(GROUP_ID, { text: programText });
+            console.log('✅ Rappel du week-end envoyé');
+        } catch (err) {
+            console.error('Erreur rappel programme:', err);
+        }
+    }
+}, { timezone: "Africa/Abidjan" });
+
+// 4a. Rappel Cotisation, Uniforme & Unité (Samedi à 16h00)
+cron.schedule('0 16 * * 6', async () => {
+    if (isConnected && sock) {
+        try {
+            await sock.sendMessage(GROUP_ID, { text: cotisationsMessage });
+            console.log('✅ Rappel cotisation du samedi envoyé');
+        } catch (err) {
+            console.error('Erreur rappel samedi:', err);
+        }
+    }
+}, { timezone: "Africa/Abidjan" });
+
+// 4b. Rappel Cotisation, Uniforme & Unité (Dimanche à 11h30)
+cron.schedule('30 11 * * 0', async () => {
+    if (isConnected && sock) {
+        try {
+            await sock.sendMessage(GROUP_ID, { text: cotisationsMessage });
+            console.log('✅ Rappel cotisation du dimanche envoyé');
+        } catch (err) {
+            console.error('Erreur rappel dimanche:', err);
+        }
+    }
+}, { timezone: "Africa/Abidjan" });
+
+// Serveur Web
+app.get('/', (req, res) => {
+    if (isConnected) {
+        res.send(`
+            <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
+                <p>Hbot1 est actif et synchronisé avec l'application de cotisation Firebase.</p>
+            </div>
+        `);
+    } else if (qrCodeData) {
+        res.send(`
+            <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                <h1>Scannez le QR Code pour connecter le bot :</h1>
+                <img src="${qrCodeData}" alt="QR Code" />
+            </div>
+        `);
+    } else {
+        res.send(`
+            <div style="text-align:center; padding:50px; font-family:sans-serif;">
+                <h1>Initialisation du bot en cours...</h1>
+                <p>Veuillez rafraîchir la page dans quelques secondes.</p>
+            </div>
+        `);
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Serveur démarré sur le port ${PORT}`);
+    connectToWhatsApp();
+});
