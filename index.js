@@ -18,7 +18,7 @@ let sockInstance = null; // Stocke la connexion active
 
 // ⚠️ REMPLACEZ CET ID PAR L'ID DE VOTRE GROUPE WHATSAPP UNE FOIS OBTENU AVEC !id
 // Exemple : "12036301234567890@g.us"
-const ID_GROUPE_WHATSAPP = "VOTRE_ID_DE_GROUPE_ICI@g.us";
+const ID_GROUPE_WHATSAPP = "22567647800-1546850208@g.us";
 
 // Serveur Web
 app.get('/', async (req, res) => {
