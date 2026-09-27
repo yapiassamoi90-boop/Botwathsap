@@ -52,7 +52,8 @@ async function getCotisationsReport() {
             setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
         );
 
-        const fetchPromise = db.collection("members").get();
+        const fetchPromise = db.collection("app_security").get();
+
         const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
         
         const now = new Date();
