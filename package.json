@@ -1,18 +1,19 @@
 {
-  "name": "botwathsap",
+  "name": "hbot-whatsapp",
   "version": "1.0.0",
-  "description": "Bot WhatsApp Modérateur, Administrateur et Programmateur de rappels",
+  "description": "Bot WhatsApp d'église avec rappels, méditations et synchronisation Firebase",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.1",
-    "express": "^4.19.2",
+    "@whiskeysockets/baileys": "^6.7.18",
+    "express": "^4.21.0",
+    "firebase-admin": "^12.0.0",
     "node-cron": "^3.0.3",
-    "pino": "^9.0.0",
-    "qrcode": "^1.5.3"
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
