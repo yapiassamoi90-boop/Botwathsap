@@ -45,11 +45,11 @@ function getMonthlyProgramText() {
 • *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
 }
 
-// Fonction pour récupérer le rapport des cotisations avec sécurité (timeout)
+// Fonction pour récupérer le rapport des cotisations avec un timeout de 15 secondes
 async function getCotisationsReport() {
     try {
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Timeout Firebase")), 7000)
+            setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
         );
 
         const fetchPromise = db.collection("members").get();
