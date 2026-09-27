@@ -1,38 +1,61 @@
-import makeWASocket, {
+0192import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import qrcode from 'qrcode-terminal';
+import qrcodeTerminal from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import pino from 'pino';
 import express from 'express';
 
-// ==========================================
-// 🌐 SERVEUR HTTP POUR RENDER
-// ==========================================
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('🤖 Bot WhatsApp Modérateur est actif et en cours d\'exécution !');
+let currentQrImage = null; // Stocke l'image base64 du QR code
+let isConnected = false;
+
+// Page Web pour afficher le QR Code sous forme d'image propre
+app.get('/', async (req, res) => {
+  if (isConnected) {
+    return res.send(`
+      <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
+        <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
+        <p>Le bot WhatsApp est actif et modère vos groupes.</p>
+      </div>
+    `);
+  }
+
+  if (currentQrImage) {
+    return res.send(`
+      <div style="text-align:center; font-family:sans-serif; padding-top:30px;">
+        <h2>📱 Scannez ce QR Code avec WhatsApp</h2>
+        <img src="${currentQrImage}" alt="QR Code WhatsApp" style="border: 10px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 280px;" />
+        <p><i>Rafraîchissez la page si le QR code expire.</i></p>
+      </div>
+    `);
+  }
+
+  res.send(`
+    <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
+      <h2>⏳ Génération du QR Code en cours...</h2>
+      <p>Veuillez rafraîchir la page dans quelques secondes.</p>
+    </div>
+  `);
 });
 
 app.listen(PORT, () => {
-  console.log(`🌍 Serveur HTTP à l'écoute sur le port ${PORT}`);
+  console.log(`🌍 Serveur Web actif sur le port ${PORT}`);
 });
 
 // ==========================================
-// 🤖 CONFIGURATION DU BOT WHATSAPP
+// 🤖 BOT WHATSAPP
 // ==========================================
-
-// Base de données simplifiée pour les programmes
 const programmes = {
   mois: "📅 *Programme du mois :*\n• Semaine 1 : Réunion d'ouverture\n• Semaine 2 : Formation technique\n• Semaine 3 : Évaluation intermédiaire\n• Semaine 4 : Bilan mensuel",
   annee: "📅 *Programme Annuel 2026 :*\n• T1 : Phase de planification\n• T2 : Exécution des projets\n• T3 : Audit & Optimisation\n• T4 : Clôture & Festivités"
 };
 
-// Mots interdits pour la modération
 const MOTS_INTERDITS = ['insulte1', 'insulte2', 'arnaque', 'spam'];
 
 async function connectToWhatsApp() {
@@ -43,27 +66,33 @@ async function connectToWhatsApp() {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: true // Permet d'afficher le QR Code dans les logs Render
+    printQRInTerminal: true
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    
+
     if (qr) {
-      console.log('📱 SCANNEZ CE QR CODE DANS VOS LOGS RENDER :');
-      qrcode.generate(qr, { small: true });
+      console.log('📱 Nouveau QR Code généré');
+      qrcodeTerminal.generate(qr, { small: true });
+      // Convertit le QR Code en image Data URL pour la page Web Render
+      try {
+        currentQrImage = await QRCode.toDataURL(qr);
+      } catch (err) {
+        console.error('Erreur génération QR image :', err);
+      }
     }
-    
+
     if (connection === 'close') {
+      isConnected = false;
       const shouldReconnect =
         (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connexion fermée. Reconnexion en cours...', shouldReconnect);
-      if (shouldReconnect) {
-        connectToWhatsApp();
-      }
+      if (shouldReconnect) connectToWhatsApp();
     } else if (connection === 'open') {
+      isConnected = true;
+      currentQrImage = null;
       console.log('✅ Bot Administrateur & Modérateur connecté avec succès !');
     }
   });
@@ -86,49 +115,35 @@ async function connectToWhatsApp() {
 
       const lowerText = textMessage.trim().toLowerCase();
 
-      // ==========================================
-      // 🛡️ SECTION 1 : AUTO-MODÉRATION (GROUPE)
-      // ==========================================
       if (isGroup) {
         try {
           const groupMetadata = await sock.groupMetadata(remoteJid);
           const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           
-          // Vérifier si le bot est admin
           const botIsAdmin = groupMetadata.participants.some(
             (p) => p.id === botId && (p.admin === 'admin' || p.admin === 'superadmin')
           );
 
-          // Vérifier si l'expéditeur du message est admin
           const senderIsAdmin = groupMetadata.participants.some(
             (p) => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin')
           );
 
-          // 1. Détection de liens WhatsApp / Spam (Non-admins uniquement)
           const containsForbiddenLink = /(chat\.whatsapp\.com\/|wa\.me\/)/i.test(textMessage);
-          
-          // 2. Détection de mots interdits
           const containsBadWord = MOTS_INTERDITS.some((word) => lowerText.includes(word));
 
           if ((containsForbiddenLink || containsBadWord) && !senderIsAdmin) {
-            // Supprimer le message si le bot est admin
-            if (botIsAdmin) {
-              await sock.sendMessage(remoteJid, { delete: msg.key });
-            }
+            if (botIsAdmin) await sock.sendMessage(remoteJid, { delete: msg.key });
 
-            // Avertir le groupe
             await sock.sendMessage(remoteJid, {
               text: `⚠️ @${sender.split('@')[0]}, votre message enfreint les règles du groupe.`,
               mentions: [sender]
             });
 
-            // Expulsion si mot interdit grave
             if (containsBadWord && botIsAdmin) {
               await sock.sendMessage(remoteJid, {
                 text: `🚫 Expulsion de @${sender.split('@')[0]} pour non-respect des règles.`,
                 mentions: [sender]
               });
-              
               await sock.groupParticipantsUpdate(remoteJid, [sender], 'remove');
             }
             continue;
@@ -138,22 +153,11 @@ async function connectToWhatsApp() {
         }
       }
 
-      // ==========================================
-      // 📅 SECTION 2 : COMMANDES DU PROGRAMME
-      // ==========================================
-
-      // Afficher le programme du mois
       if (lowerText === '!programme mois' || lowerText === '!programme') {
         await sock.sendMessage(remoteJid, { text: programmes.mois }, { quoted: msg });
-      }
-
-      // Afficher le programme de l'année
-      else if (lowerText === '!programme annee') {
+      } else if (lowerText === '!programme annee') {
         await sock.sendMessage(remoteJid, { text: programmes.annee }, { quoted: msg });
-      }
-
-      // Mise à jour du programme (réservé aux administrateurs)
-      else if (lowerText.startsWith('!setprogramme ')) {
+      } else if (lowerText.startsWith('!setprogramme ')) {
         if (!isGroup) continue;
 
         const groupMetadata = await sock.groupMetadata(remoteJid);
@@ -171,13 +175,8 @@ async function connectToWhatsApp() {
         const newProgram = textMessage.replace('!setprogramme ', '').trim();
         programmes.mois = `📅 *Nouveau Programme du mois :*\n\n${newProgram}`;
 
-        await sock.sendMessage(remoteJid, {
-          text: "✅ Le programme du mois a été mis à jour !"
-        }, { quoted: msg });
-      }
-
-      // Commande manuelle d'expulsion par un admin (!kick @mention)
-      else if (lowerText.startsWith('!kick') && isGroup) {
+        await sock.sendMessage(remoteJid, { text: "✅ Le programme du mois a été mis à jour !" }, { quoted: msg });
+      } else if (lowerText.startsWith('!kick') && isGroup) {
         const groupMetadata = await sock.groupMetadata(remoteJid);
         const senderIsAdmin = groupMetadata.participants.some(
           (p) => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin')
@@ -190,8 +189,7 @@ async function connectToWhatsApp() {
 
         const mentionedJid = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
         if (mentionedJid && mentionedJid.length > 0) {
-          const target = mentionedJid[0];
-          await sock.groupParticipantsUpdate(remoteJid, [target], 'remove');
+          await sock.groupParticipantsUpdate(remoteJid, [mentionedJid[0]], 'remove');
           await sock.sendMessage(remoteJid, { text: `🚪 Utilisateur expulsé avec succès.` });
         } else {
           await sock.sendMessage(remoteJid, { text: "⚠️ Veuillez mentionner la personne à expulser (ex: !kick @nom)." });
