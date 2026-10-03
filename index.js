@@ -3,12 +3,16 @@ const express = require('express');
 const cron = require('node-cron');
 const QRCode = require('qrcode');
 const admin = require('firebase-admin');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuration du groupe WhatsApp
+// Configuration du groupe WhatsApp principal
 const GROUP_ID = '22567647800-1546850208@g.us';
+
+// Initialisation de l'API Gemini avec ta clé
+const ai = new GoogleGenAI({ apiKey: 'AIzaSyCzQTGCVvXsLMUFfuEmrIFf_gHpiEV1DVk' });
 
 // Initialisation de Firebase Admin avec le fichier secret de Render
 const serviceAccount = require('./serviceAccountKey.json');
@@ -30,8 +34,8 @@ const verses = [
     { verse: "Josué 1:8", text: "Que ce livre de la loi ne s'éloigne point de ta bouche; médite-le jour et nuit, pour agir fidèlement selon tout ce qui y est écrit; car c'est alors que tu réussiras dans tes entreprises." },
     { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
     { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
-    { verse: "Ésaïe 40:31", text: "Mais ceux qui s'confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
-    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes'_{\text{et il aplanira tes sentiers." },
+    { verse: "Ésaïe 40:31", text: "Mais ceux qui se confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
     { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
     { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
     { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
@@ -62,7 +66,6 @@ async function getCotisationsReport() {
 
         snapshot.forEach((doc) => {
             const data = doc.data();
-            // Récupération de tous les noms de champs possibles
             const memberName = data.name || data.memberName || data.nom || data.libelle || "Membre";
             const amount = data.amount || data.montant || data.valeur || "500";
             const dateVal = data.timestamp || data.date || data.createdAt;
@@ -83,13 +86,11 @@ async function getCotisationsReport() {
             });
         });
 
-        // Tri manuel par date du plus récent au plus ancien pour être sûr
         recentPayments.sort((a, b) => b.rawDate - a.rawDate);
 
         let response = `📊 *DERNIERS PAIEMENTS ENREGISTRÉS* 🪙\n\n`;
 
         if (recentPayments.length > 0) {
-            // On prend les 5 plus récents
             const top5 = recentPayments.slice(0, 5).map(item => item.text);
             response += top5.join('\n') + `\n\n`;
         } else {
@@ -105,7 +106,7 @@ async function getCotisationsReport() {
     }
 }
 
-// Message de rappel de cotisation pour le samedi et le dimanche
+// Message de rappel de cotisation
 const cotisationsMessage = `💰 *RAPPEL IMPORTANT & ENCOURAGEMENT* 🎵
 
 Chers membres du groupe musical,
@@ -166,40 +167,76 @@ async function connectToWhatsApp() {
         if (!msg.message || msg.key.fromMe) return;
 
         const remoteJid = msg.key.remoteJid;
+        const isGroup = remoteJid.endsWith('@g.us');
         const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const lowerText = textMessage.trim().toLowerCase();
 
-        // Commande !programme
+        // 1. Commandes fixes (prioritaires partout)
         if (lowerText === '!programme') {
             const programText = getMonthlyProgramText();
             await sock.sendMessage(remoteJid, { text: programText }, { quoted: msg });
+            return;
         }
 
-        // Commande !cotisation
         if (lowerText === '!cotisation' || lowerText === '!cotisations') {
             await sock.sendPresenceUpdate('composing', remoteJid);
             const report = await getCotisationsReport();
             await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
+            return;
         }
 
-        // Commande de présentation
-        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot') || lowerText.includes('qui es tu hbot') || lowerText === 'hbot') {
-            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel du groupe.*
+        if (lowerText.includes('qui est hbot') || lowerText === 'hbot') {
+            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel intelligent.*
 
 📌 *Mes fonctions :*
 • 📖 *Méditation matinale :* Un verset biblique chaque matin à 06h30.
 • 🔔 *Rappels du week-end :* Envoi du programme les vendredis et samedis à 14h00.
 • 🌙 *Veillées de répétition :* Rappel les 1er et derniers vendredis du mois à 14h00.
 • 💰 *Cotisation & Unité :* Rappels les samedis à 16h00 et dimanches à 11h30.
+• 🧠 *Mode IA (Façon Gemini) :* Tu peux me poser des questions ou me demander mon avis en écrivant "hbot" dans tes messages !
 
 💡 *Commandes disponibles :*
-• Tapez *!programme* pour voir le planning des passages.
-• Tapez *!cotisation* pour voir les derniers versements enregistrés.
-• Tapez *qui est hbot* pour revoir ce message.
+• Tapez *!programme* pour voir le planning.
+• Tapez *!cotisation* pour voir les versements.
 
 Que le Seigneur vous bénisse ! 🙏✨`;
-
             await sock.sendMessage(remoteJid, { text: presentationText }, { quoted: msg });
+            return;
+        }
+
+        // 2. LOGIQUE INTELLIGENTE (Mode Gemini)
+        // En privé : il répond à tout. En groupe : il ne répond que si on le mentionne ou qu'on tape "hbot"
+        const isMentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user.id) || 
+                            lowerText.includes('hbot');
+
+        if (!isGroup || isMentioned) {
+            try {
+                await sock.sendPresenceUpdate('composing', remoteJid);
+
+                // Personnalité contextuelle selon le groupe
+                let systemInstruction = "Tu es Hbot1, un assistant virtuel intelligent, courtois, et constructif.";
+                
+                if (remoteJid === '22567647800-1546850208@g.us') {
+                    systemInstruction = "Tu es Hbot1, l'assistant virtuel intelligent d'un groupe musical d'église (Assemblées de Dieu). Tu aides avec sagesse, tu donnes ton avis constructif sur les sujets abordés, tu encourages l'unité, le sérieux dans le service chrétien, et tu as un ton respectueux, fraternel et inspirant.";
+                }
+
+                // Appel à l'IA Gemini
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: textMessage,
+                    config: {
+                        systemInstruction: systemInstruction,
+                        temperature: 0.7,
+                    }
+                });
+
+                const aiReply = response.text || "Je n'ai pas pu analyser ta demande.";
+                await sock.sendMessage(remoteJid, { text: aiReply }, { quoted: msg });
+
+            } catch (error) {
+                console.error("Erreur avec l'API Gemini:", error);
+                await sock.sendMessage(remoteJid, { text: "⚠️ Désolé, j'ai un petit souci de connexion cérébrale pour le moment." }, { quoted: msg });
+            }
         }
     });
 }
@@ -282,7 +319,7 @@ app.get('/', (req, res) => {
         res.send(`
             <div style="text-align:center; padding:50px; font-family:sans-serif;">
                 <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
-                <p>Hbot1 est actif et synchronisé avec l'historique des transactions Firebase.</p>
+                <p>Hbot1 est actif, couplé à l'IA Gemini et synchronisé avec Firebase.</p>
             </div>
         `);
     } else if (qrCodeData) {
