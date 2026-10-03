@@ -1,29 +1,49 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 const cron = require('node-cron');
 const QRCode = require('qrcode');
 const admin = require('firebase-admin');
-const { GoogleGenAI } = require('google-genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuration du groupe WhatsApp principal
+// Configuration du groupe WhatsApp
 const GROUP_ID = '22567647800-1546850208@g.us';
 
-// Initialisation de l'API Gemini avec ta clé
-const ai = new GoogleGenAI({ apiKey: 'AIzaSyCzQTGCVvXsLMUFfuEmrIFf_gHpiEV1DVk' });
-
-// Initialisation de Firebase Admin avec le fichier secret de Render
-const serviceAccount = require('./serviceAccountKey.json');
-
+// --- INITIALISATION DE FIREBASE ---
+// Supporte les variables d'environnement Render ou le fichier local s'il existe
 if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: "registre-eglise"
-    });
+    try {
+        if (process.env.FIREBASE_PRIVATE_KEY) {
+            admin.initializeApp({
+                credential: admin.credential.cert({
+                    projectId: process.env.FIREBASE_PROJECT_ID || "registre-eglise",
+                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+                })
+            });
+        } else {
+            const serviceAccount = require('./serviceAccountKey.json');
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount),
+                projectId: "registre-eglise"
+            });
+        }
+        console.log("✅ Firebase initialisé avec succès.");
+    } catch (error) {
+        console.error("⚠️ Attention: Firebase initialisé en mode dégradé ou erreur :", error.message);
+    }
 }
-const db = admin.firestore();
+const db = admin.apps.length ? admin.firestore() : null;
+
+// --- INITIALISATION DE GEMINI ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCzQTGCVvXsLMUFfuEmrIFf_gHpiEV1DVk';
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+const systemInstruction = `Tu es Hbot1, l'assistant virtuel bienveillant du groupe musical d'une communauté chrétienne/d'église (Assemblées de Dieu - Temple de la Restauration Divine). 
+Tu aides les membres, réponds à leurs questions spirituelles, partages des versets bibliques d'encouragement, 
+et aides à la coordination des célébrations et prières. Sois toujours courtois, inspirant et respectueux.`;
 
 let qrCodeData = null;
 let isConnected = false;
@@ -35,7 +55,7 @@ const verses = [
     { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
     { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
     { verse: "Ésaïe 40:31", text: "Mais ceux qui se confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
-    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi-en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
     { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
     { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
     { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
@@ -54,6 +74,7 @@ function getMonthlyProgramText() {
 
 // Fonction pour récupérer le rapport des cotisations depuis l'historique (transactions)
 async function getCotisationsReport() {
+    if (!db) return "❌ Base de données Firebase non disponible.";
     try {
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
@@ -161,23 +182,23 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Écoute des messages entrants
+    // Écoute des messages entrants avec intégration Gemini
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
 
         const remoteJid = msg.key.remoteJid;
-        const isGroup = remoteJid.endsWith('@g.us');
         const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const lowerText = textMessage.trim().toLowerCase();
 
-        // 1. Commandes fixes (prioritaires partout)
+        // Commande !programme
         if (lowerText === '!programme') {
             const programText = getMonthlyProgramText();
             await sock.sendMessage(remoteJid, { text: programText }, { quoted: msg });
             return;
         }
 
+        // Commande !cotisation
         if (lowerText === '!cotisation' || lowerText === '!cotisations') {
             await sock.sendPresenceUpdate('composing', remoteJid);
             const report = await getCotisationsReport();
@@ -185,55 +206,43 @@ async function connectToWhatsApp() {
             return;
         }
 
-        if (lowerText.includes('qui est hbot') || lowerText === 'hbot') {
-            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel intelligent.*
+        // Commande de présentation
+        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot') || lowerText.includes('qui es tu hbot') || lowerText === 'hbot') {
+            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel du groupe.*
 
 📌 *Mes fonctions :*
 • 📖 *Méditation matinale :* Un verset biblique chaque matin à 06h30.
 • 🔔 *Rappels du week-end :* Envoi du programme les vendredis et samedis à 14h00.
 • 🌙 *Veillées de répétition :* Rappel les 1er et derniers vendredis du mois à 14h00.
 • 💰 *Cotisation & Unité :* Rappels les samedis à 16h00 et dimanches à 11h30.
-• 🧠 *Mode IA (Façon Gemini) :* Tu peux me poser des questions ou me demander mon avis en écrivant "hbot" dans tes messages !
+• 🧠 *Intelligence Artificielle :* Tu peux me poser des questions ou me parler, je te répondrai !
 
 💡 *Commandes disponibles :*
-• Tapez *!programme* pour voir le planning.
-• Tapez *!cotisation* pour voir les versements.
+• Tapez *!programme* pour voir le planning des passages.
+• Tapez *!cotisation* pour voir les derniers versements enregistrés.
+• Tapez *qui est hbot* pour revoir ce message.
 
 Que le Seigneur vous bénisse ! 🙏✨`;
+
             await sock.sendMessage(remoteJid, { text: presentationText }, { quoted: msg });
             return;
         }
 
-        // 2. LOGIQUE INTELLIGENTE (Mode Gemini)
-        const isMentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user.id) || 
-                            lowerText.includes('hbot');
+        // Si ce n'est pas une commande directe, on interroge Gemini (dans les groupes ou en privé selon ton besoin)
+        try {
+            await sock.sendPresenceUpdate('composing', remoteJid);
+            const model = genAI.getGenerativeModel({ 
+                model: 'gemini-1.5-flash',
+                systemInstruction: systemInstruction 
+            });
 
-        if (!isGroup || isMentioned) {
-            try {
-                await sock.sendPresenceUpdate('composing', remoteJid);
+            const result = await model.generateContent(textMessage);
+            const response = await result.response;
+            const aiReply = response.text() || "Que le Seigneur bénisse ta démarche. Je n'ai pas pu analyser ta demande pour l'instant.";
 
-                let systemInstruction = "Tu es Hbot1, un assistant virtuel intelligent, courtois, et constructif.";
-                
-                if (remoteJid === '22567647800-1546850208@g.us') {
-                    systemInstruction = "Tu es Hbot1, l'assistant virtuel intelligent d'un groupe musical d'église (Assemblées de Dieu). Tu aides avec sagesse, tu donnes ton avis constructif sur les sujets abordés, tu encourages l'unité, le sérieux dans le service chrétien, et tu as un ton respectueux, fraternel et inspirant.";
-                }
-
-                const response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: textMessage,
-                    config: {
-                        systemInstruction: systemInstruction,
-                        temperature: 0.7,
-                    }
-                });
-
-                const aiReply = response.text || "Je n'ai pas pu analyser ta demande.";
-                await sock.sendMessage(remoteJid, { text: aiReply }, { quoted: msg });
-
-            } catch (error) {
-                console.error("Erreur avec l'API Gemini:", error);
-                await sock.sendMessage(remoteJid, { text: "⚠️ Désolé, j'ai un petit souci de connexion cérébrale pour le moment." }, { quoted: msg });
-            }
+            await sock.sendMessage(remoteJid, { text: aiReply }, { quoted: msg });
+        } catch (error) {
+            console.error("Erreur lors du traitement par Gemini :", error);
         }
     });
 }
@@ -316,7 +325,7 @@ app.get('/', (req, res) => {
         res.send(`
             <div style="text-align:center; padding:50px; font-family:sans-serif;">
                 <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
-                <p>Hbot1 est actif, couplé à l'IA Gemini et synchronisé avec Firebase.</p>
+                <p>Hbot1 est actif, synchronisé avec Firebase et propulsé par Gemini 1.5 Flash.</p>
             </div>
         `);
     } else if (qrCodeData) {
