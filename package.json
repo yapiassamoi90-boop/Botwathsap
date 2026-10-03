@@ -1,13 +1,12 @@
 {
-  "name": "hbot-whatsapp",
+  "name": "botwathsap",
   "version": "1.0.0",
-  "description": "Bot WhatsApp d'église avec rappels, méditations et synchronisation Firebase",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "google-genai": "latest",
+    "@google/generative-ai": "^0.1.3",
     "@whiskeysockets/baileys": "^6.7.18",
     "express": "^4.21.0",
     "firebase-admin": "^12.0.0",
