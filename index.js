@@ -12,7 +12,6 @@ const PORT = process.env.PORT || 3000;
 const GROUP_ID = '22567647800-1546850208@g.us';
 
 // --- INITIALISATION DE FIREBASE ---
-// Supporte les variables d'environnement Render ou le fichier local s'il existe
 if (!admin.apps.length) {
     try {
         if (process.env.FIREBASE_PRIVATE_KEY) {
@@ -182,7 +181,7 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Écoute des messages entrants avec intégration Gemini
+    // Écoute des messages entrants
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
@@ -228,7 +227,7 @@ Que le Seigneur vous bénisse ! 🙏✨`;
             return;
         }
 
-        // Si ce n'est pas une commande directe, on interroge Gemini (dans les groupes ou en privé selon ton besoin)
+        // Si ce n'est pas une commande directe, on interroge Gemini et on envoie la réponse
         try {
             await sock.sendPresenceUpdate('composing', remoteJid);
             const model = genAI.getGenerativeModel({ 
@@ -240,7 +239,9 @@ Que le Seigneur vous bénisse ! 🙏✨`;
             const response = await result.response;
             const aiReply = response.text() || "Que le Seigneur bénisse ta démarche. Je n'ai pas pu analyser ta demande pour l'instant.";
 
+            // Envoi effectif de la réponse de Gemini dans le chat
             await sock.sendMessage(remoteJid, { text: aiReply }, { quoted: msg });
+
         } catch (error) {
             console.error("Erreur lors du traitement par Gemini :", error);
         }
