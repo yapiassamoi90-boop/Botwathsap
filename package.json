@@ -1,15 +1,15 @@
 {
-  "name": "botwathsap",
+  "name": "botwathsapp",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.1.3",
-    "@whiskeysockets/baileys": "^6.7.18",
+    "@google/generative-ai": "^0.21.0",
+    "@whiskeysockets/baileys": "^6.7.20",
     "express": "^4.21.0",
-    "firebase-admin": "^12.0.0",
+    "firebase-admin": "^12.4.0",
     "node-cron": "^3.0.3",
     "qrcode": "^1.5.4"
   },
