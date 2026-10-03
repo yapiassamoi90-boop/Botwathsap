@@ -6,12 +6,11 @@ const QRCode = require('qrcode');
 const admin = require('firebase-admin');
 
 const app = express();
+app.use(express.json());
 const PORT = process.env.PORT || 3000;
-
-// Configuration du groupe WhatsApp
 const GROUP_ID = '22567647800-1546850208@g.us';
 
-// --- INITIALISATION DE FIREBASE ---
+// --- FIREBASE ---
 if (!admin.apps.length) {
     try {
         if (process.env.FIREBASE_PRIVATE_KEY) {
@@ -23,330 +22,176 @@ if (!admin.apps.length) {
                 })
             });
         } else {
-            const serviceAccount = require('./serviceAccountKey.json');
-            admin.initializeApp({
-                credential: admin.credential.cert(serviceAccount),
-                projectId: "registre-eglise"
-            });
+            admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccountKey.json')) });
         }
-        console.log("✅ Firebase initialisé avec succès.");
-    } catch (error) {
-        console.error("⚠️ Attention: Firebase initialisé en mode dégradé ou erreur :", error.message);
-    }
+        console.log("✅ Firebase OK");
+    } catch (e) { console.error("⚠️ Firebase error:", e.message); }
 }
-const db = admin.apps.length ? admin.firestore() : null;
+const db = admin.apps.length? admin.firestore() : null;
 
-// --- INITIALISATION DE GEMINI ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCzQTGCVvXsLMUFfuEmrIFf_gHpiEV1DVk';
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+// --- GEMINI ---
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const systemInstruction = `Tu es Hbot1, l'assistant virtuel bienveillant du groupe musical d'une communauté chrétienne/d'église (Assemblées de Dieu - Temple de la Restauration Divine). 
-Tu aides les membres, réponds à leurs questions spirituelles, partages des versets bibliques d'encouragement, 
-et aides à la coordination des célébrations et prières. Sois toujours courtois, inspirant et respectueux.`;
+const systemInstruction = `
+Tu es Hbot1, assistant intelligent, bienveillant et polyvalent créé pour le groupe musical de l'Église Assemblées de Dieu - Temple de la Restauration Divine, mais tu sais parler de TOUT.
+
+REGLES:
+1. Tu peux parler de TOUT : vie quotidienne, école, travail, amour, science, tech, humour, conseils, sport, cuisine, drague, études, etc. Tu n'es PAS limité à la religion.
+2. Si question spirituelle/biblique -> réponds avec verset et encouragement chrétien.
+3. Si autre sujet -> réponds normalement comme un assistant généraliste intelligent, utile, drôle si besoin.
+4. Reste toujours respectueux, sans jugement.
+5. Parle en français simple, avec emojis utiles.
+6. Tu t'appelles Hbot1, sympa, proche des jeunes, comme un grand frère.
+7. Ne dis jamais que tu es limité.
+`;
 
 let qrCodeData = null;
 let isConnected = false;
 let sock = null;
 
-// Versets pour la méditation matinale de 6h30
 const verses = [
-    { verse: "Josué 1:8", text: "Que ce livre de la loi ne s'éloigne point de ta bouche; médite-le jour et nuit, pour agir fidèlement selon tout ce qui y est écrit; car c'est alors que tu réussiras dans tes entreprises." },
+    { verse: "Josué 1:8", text: "Que ce livre de la loi ne s'éloigne point de ta bouche; médite-le jour et nuit..." },
     { verse: "Psaumes 119:105", text: "Ta parole est une lampe à mes pieds, Et une lumière sur mon sentier." },
     { verse: "Psaumes 23:1", text: "L'Éternel est mon berger: je ne manquerai de rien." },
-    { verse: "Ésaïe 40:31", text: "Mais ceux qui se confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles; ils courront et ne se lasseront point, ils marcheront et ne s'épuiseront point." },
-    { verse: "Proverbes 3:5-6", text: "Confie-toi-en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence; reconnais-le dans toutes tes voies, et il aplanira tes sentiers." },
-    { verse: "Romains 8:28", text: "Nous savons, du reste, que toutes choses concourent au bien de ceux qui aiment Dieu, de ceux qui sont appelés selon son dessein." },
+    { verse: "Ésaïe 40:31", text: "Ceux qui se confient en l'Éternel renouvelleront leur force; ils prennent leur vol comme les aigles." },
+    { verse: "Proverbes 3:5-6", text: "Confie-toi en l'Éternel de tout ton cœur, et ne t'appuie pas sur ton intelligence." },
+    { verse: "Romains 8:28", text: "Toutes choses concourent au bien de ceux qui aiment Dieu." },
     { verse: "Philippiens 4:13", text: "Je puis tout par celui qui me fortifie." },
-    { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais dans la détresse." }
+    { verse: "Psaumes 46:2", text: "Dieu est pour nous un refuge et un appui, Un secours qui ne manque jamais." }
 ];
 
-// Programme mensuel
 function getMonthlyProgramText() {
-    return `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
-
-📅 *PROGRAMME DU MOIS*
-• *04/10/26* : Adoration: Evodie | Célébration: Mme M'Bro | 2e Offrande: Nancy
-• *11/10/26* : Adoration: Bérénice | Célébration: Mme Diallo | 2e Offrande: Marie-Ange
-• *18/10/26* : Adoration: Joanne | Célébration: Nancy | 2e Offrande: Evodie
-• *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
+    return `⛪ *ÉGLISE AD - TEMPLE RESTAURATION*\n\n📅 *PROGRAMME DU MOIS*\n• *04/10/26* : Adoration: Evodie | Célébration: Mme M'Bro | 2e Offrande: Nancy\n• *11/10/26* : Adoration: Bérénice | Célébration: Mme Diallo | 2e Offrande: Marie-Ange\n• *18/10/26* : Adoration: Joanne | Célébration: Nancy | 2e Offrande: Evodie\n• *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
 }
 
-// Fonction pour récupérer le rapport des cotisations depuis l'historique (transactions)
 async function getCotisationsReport() {
-    if (!db) return "❌ Base de données Firebase non disponible.";
+    if (!db) return "❌ Firebase non disponible.";
     try {
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Timeout Firebase")), 15000)
-        );
-
-        const fetchPromise = db.collection("transactions").get();
-        const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
-        
-        let recentPayments = [];
-
-        snapshot.forEach((doc) => {
-            const data = doc.data();
-            const memberName = data.name || data.memberName || data.nom || data.libelle || "Membre";
-            const amount = data.amount || data.montant || data.valeur || "500";
-            const dateVal = data.timestamp || data.date || data.createdAt;
-            
-            let dateFormatted = "Récemment";
-            if (dateVal) {
-                const dateObj = dateVal.toDate ? dateVal.toDate() : new Date(dateVal);
-                if (!isNaN(dateObj)) {
-                    dateFormatted = dateObj.toLocaleString('fr-FR', { 
-                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
-                    });
-                }
-            }
-            
-            recentPayments.push({
-                text: `✅ *${memberName}* : +${amount} FCFA _(${dateFormatted})_`,
-                rawDate: dateVal ? (dateVal.toDate ? dateVal.toDate().getTime() : new Date(dateVal).getTime()) : 0
-            });
+        const snap = await db.collection("transactions").orderBy("timestamp", "desc").limit(5).get();
+        if (snap.empty) return `🟢 Aucun paiement récent.\n\n💡 Cotisation 100F chaque dimanche pour studio & agapé.`;
+        let out = `📊 *DERNIERS PAIEMENTS* 🪙\n\n`;
+        snap.forEach(d => {
+            const x = d.data();
+            const name = x.name || x.memberName || "Membre";
+            const amount = x.amount || x.montant || "500";
+            const dt = x.timestamp?.toDate? x.timestamp.toDate() : new Date(x.timestamp || Date.now());
+            out += `✅ *${name}* : +${amount} FCFA _(${dt.toLocaleString('fr-FR')})_\n`;
         });
-
-        recentPayments.sort((a, b) => b.rawDate - a.rawDate);
-
-        let response = `📊 *DERNIERS PAIEMENTS ENREGISTRÉS* 🪙\n\n`;
-
-        if (recentPayments.length > 0) {
-            const top5 = recentPayments.slice(0, 5).map(item => item.text);
-            response += top5.join('\n') + `\n\n`;
-        } else {
-            response += `🟢 Aucun paiement récent enregistré dans la base.\n\n`;
-        }
-
-        response += `💡 *Rappel :* Cotisation pour nos sorties en studio et moments d'agapé. Merci pour votre fidélité ! 🙏✨`;
-
-        return response;
-    } catch (error) {
-        console.error("Erreur Firebase:", error);
-        return `❌ Erreur Firebase : ${error.message}`;
-    }
+        return out + "\n💡 Merci pour votre fidélité! 🙏✨";
+    } catch (e) { return `❌ Erreur Firebase: ${e.message}`; }
 }
 
-// Message de rappel de cotisation
-const cotisationsMessage = `💰 *RAPPEL IMPORTANT & ENCOURAGEMENT* 🎵
+const cotisationsMessage = `💰 *RAPPEL COTISATION* 🎵\n\n🪙 100 FCFA chaque dimanche pour studio & agapé!\n👔 Prenons soin de nos uniformes.\n🤝 Demeurons unis!\n\nTape!cotisation pour voir les paiements.\n*Psaumes 133:1* 🙏`;
 
-Chers membres du groupe musical,
-
-1. 🪙 *Cotisation hebdomadaire :* N'oublions pas notre cotisation de *100 FCFA chaque dimanche*. Cet effort collectif permet de financer nos *sorties en studio* et nos *moments d'agapé* !
-2. 👔 *Uniformes :* Prenons grand soin de nos tenues et uniformes du groupe afin d'honorer le Seigneur dans la présentation.
-3. 🤝 *Unité :* Demeurons unis, dans l'amour et la fraternité pour le service de Dieu.
-
-💡 *Astuce :* Tapez *!cotisation* pour voir les derniers paiements enregistrés !
-
-*« Qu'il est doux, qu'il est agréable pour des frères de demeurer ensemble ! »* — *Psaumes 133:1* 🙏✨`;
-
-// Vérification du 1er et dernier vendredi du mois
 function isFirstOrLastFriday(date) {
-    const day = date.getDate();
-    const month = date.getMonth();
-    const isFirstFriday = day <= 7;
-    const nextWeek = new Date(date);
-    nextWeek.setDate(day + 7);
-    const isLastFriday = nextWeek.getMonth() !== month;
-    return isFirstFriday || isLastFriday;
+    const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    return date.getDate() <= 7 || date.getDate() > lastDay - 7;
 }
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-
-    sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false
-    });
-
+    sock = makeWASocket({ auth: state, printQRInTerminal: false });
     sock.ev.on('creds.update', saveCreds);
-
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            qrCodeData = await QRCode.toDataURL(qr);
-            isConnected = false;
-        }
-
+        if (qr) { qrCodeData = await QRCode.toDataURL(qr); isConnected = false; }
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
             isConnected = false;
-            if (shouldReconnect) {
-                connectToWhatsApp();
-            }
-        } else if (connection === 'open') {
-            isConnected = true;
-            qrCodeData = null;
-            console.log('✅ Bot connecté à WhatsApp !');
-        }
+            if (lastDisconnect?.error?.output?.statusCode!== DisconnectReason.loggedOut) connectToWhatsApp();
+        } else if (connection === 'open') { isConnected = true; qrCodeData = null; console.log('✅ Bot connecté!'); }
     });
 
-    // Écoute des messages entrants
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
+        const jid = msg.key.remoteJid;
+        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
+        const low = text.toLowerCase();
+        if (!text) return;
 
-        const remoteJid = msg.key.remoteJid;
-        const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        const lowerText = textMessage.trim().toLowerCase();
+        // COMMANDES
+        if (low === '!programme' || low === '!p') {
+            await sock.sendMessage(jid, { text: getMonthlyProgramText() }, { quoted: msg }); return;
+        }
+        if (low === '!cotisation' || low === '!cotisations' || low === '!c') {
+            await sock.sendPresenceUpdate('composing', jid);
+            const r = await getCotisationsReport();
+            await sock.sendMessage(jid, { text: r }, { quoted: msg }); return;
+        }
+        if (low === '!verset' || low === '!verse' || low === '!v') {
+            const v = verses[Math.floor(Math.random() * verses.length)];
+            await sock.sendMessage(jid, { text: `📖 *VERSET DU JOUR* ☀️\n\n*« ${v.text} »*\n— *${v.verse}* 🙏✨` }, { quoted: msg }); return;
+        }
+        if (low === '!id' || low === '!groupid' || low === '!jid' || low === '!lid') {
+            const isGroup = jid.endsWith('@g.us');
+            let groupInfo = null;
+            try { if (isGroup) groupInfo = await sock.groupMetadata(jid); } catch {}
+            let txt = `🆔 *INFOS ID*\n\n📍 *ID de ce chat:*\n\`${jid}\`\n\n👤 *Ton ID:*\n\`${msg.key.participant || jid}\`\n\n`;
+            if (isGroup) txt += `👥 *Nom:* ${groupInfo?.subject || 'Groupe'}\n👥 *Membres:* ${groupInfo?.participants?.length || '?'}\n\n💡 Copie l'ID du haut et mets le dans GROUP_ID dans ton code.`;
+            else txt += `💬 Chat privé`;
+            await sock.sendMessage(jid, { text: txt }, { quoted: msg }); return;
+        }
+        if (low.includes('qui est hbot') || low === 'hbot' || low === '!help' || low === '!aide') {
+            const help = `🤖 *Je suis Hbot1, ton grand frère assistant!*
 
-        // Commande !programme
-        if (lowerText === '!programme') {
-            const programText = getMonthlyProgramText();
-            await sock.sendMessage(remoteJid, { text: programText }, { quoted: msg });
-            return;
+Je peux parler de TOUT avec toi:
+🧠 Cours, devoirs, science, tech
+❤️ Conseils vie, amour, amitié
+🍛 Cuisine, sport, musique
+📖 Bible, prière, versets
+😂 Blagues, humour
+
+💡 *Commandes:*
+•!programme -> planning église
+•!cotisation -> derniers paiements
+•!verset -> verset aléatoire
+•!id -> voir l'ID du groupe
+
+Pose moi n'importe quelle question, je suis là! 🙏✨`;
+            await sock.sendMessage(jid, { text: help }, { quoted: msg }); return;
         }
 
-        // Commande !cotisation
-        if (lowerText === '!cotisation' || lowerText === '!cotisations') {
-            await sock.sendPresenceUpdate('composing', remoteJid);
-            const report = await getCotisationsReport();
-            await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
-            return;
-        }
-
-        // Commande de présentation
-        if (lowerText.includes('qui est hbot') || lowerText.includes('c\'est quoi hbot') || lowerText.includes('qui es tu hbot') || lowerText === 'hbot') {
-            const presentationText = `🤖 *Bonjour ! Je suis Hbot1, l'assistant virtuel du groupe.*
-
-📌 *Mes fonctions :*
-• 📖 *Méditation matinale :* Un verset biblique chaque matin à 06h30.
-• 🔔 *Rappels du week-end :* Envoi du programme les vendredis et samedis à 14h00.
-• 🌙 *Veillées de répétition :* Rappel les 1er et derniers vendredis du mois à 14h00.
-• 💰 *Cotisation & Unité :* Rappels les samedis à 16h00 et dimanches à 11h30.
-• 🧠 *Intelligence Artificielle :* Tu peux me poser des questions ou me parler, je te répondrai !
-
-💡 *Commandes disponibles :*
-• Tapez *!programme* pour voir le planning des passages.
-• Tapez *!cotisation* pour voir les derniers versements enregistrés.
-• Tapez *qui est hbot* pour revoir ce message.
-
-Que le Seigneur vous bénisse ! 🙏✨`;
-
-            await sock.sendMessage(remoteJid, { text: presentationText }, { quoted: msg });
-            return;
-        }
-
-        // Si ce n'est pas une commande directe, on interroge Gemini et on envoie la réponse
+        // IA - PARLE DE TOUT
         try {
-            await sock.sendPresenceUpdate('composing', remoteJid);
-            const model = genAI.getGenerativeModel({ 
-                model: 'gemini-1.5-flash',
-                systemInstruction: systemInstruction 
-            });
-
-            const result = await model.generateContent(textMessage);
-            const response = await result.response;
-            const aiReply = response.text() || "Que le Seigneur bénisse ta démarche. Je n'ai pas pu analyser ta demande pour l'instant.";
-
-            // Envoi effectif de la réponse de Gemini dans le chat
-            await sock.sendMessage(remoteJid, { text: aiReply }, { quoted: msg });
-
-        } catch (error) {
-            console.error("Erreur lors du traitement par Gemini :", error);
+            await sock.sendPresenceUpdate('composing', jid);
+            const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash', systemInstruction });
+            const chat = model.startChat({ history: [] });
+            const result = await chat.sendMessage(text);
+            let reply = result.response.text() || "Je n'ai pas compris, reformule 🙏";
+            if (reply.length > 3500) reply = reply.substring(0, 3500) + "\n...";
+            await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+        } catch (e) {
+            console.error("Gemini error:", e.message);
+            await sock.sendMessage(jid, { text: "🙏 Oups petite erreur, réessaie ta question!" }, { quoted: msg });
         }
     });
 }
 
-// TÂCHES AUTOMATIQUES (CRON JOBS)
+// CRON
 cron.schedule('30 6 * * *', async () => {
     if (isConnected && sock) {
-        const randomVerse = verses[Math.floor(Math.random() * verses.length)];
-        const meditationMessage = `📖 *MÉDITATION DU MATIN* ☀️
-
-*« ${randomVerse.text} »*
-— *${randomVerse.verse}*
-
-Que le Seigneur vous bénisse et vous guide tout au long de cette journée ! 🙏✨`;
-
-        try {
-            await sock.sendMessage(GROUP_ID, { text: meditationMessage });
-            console.log('✅ Méditation envoyée à 6h30');
-        } catch (err) {
-            console.error('Erreur méditation:', err);
-        }
+        const v = verses[Math.floor(Math.random() * verses.length)];
+        await sock.sendMessage(GROUP_ID, { text: `📖 *MÉDITATION DU MATIN* ☀️\n\n*« ${v.text} »*\n— *${v.verse}*\n\nBonne journée! 🙏✨` });
     }
 }, { timezone: "Africa/Abidjan" });
 
 cron.schedule('0 14 * * 5', async () => {
-    const today = new Date();
-    if (isFirstOrLastFriday(today) && isConnected && sock) {
-        const veilléeMessage = `🌙 *RAPPEL : VEILLÉE DE RÉPÉTITION CE SOIR !* 🎵
-
-Chers frères et sœurs, nous vous rappelons que nous avons notre *veillée de répétition* ce soir.
-
-Venez nombreux afin de préparer nos cœurs et nos voix pour le service du Seigneur ! 🙏🎶`;
-
-        try {
-            await sock.sendMessage(GROUP_ID, { text: veilléeMessage });
-            console.log('✅ Rappel de veillée envoyé');
-        } catch (err) {
-            console.error('Erreur rappel veillée:', err);
-        }
+    if (isFirstOrLastFriday(new Date()) && isConnected && sock) {
+        await sock.sendMessage(GROUP_ID, { text: `🌙 *RAPPEL VEILLÉE RÉPÉTITION CE SOIR!* 🎵\n\nVenez nombreux préparer nos cœurs! 🙏` });
     }
 }, { timezone: "Africa/Abidjan" });
 
 cron.schedule('0 14 * * 5,6', async () => {
-    if (isConnected && sock) {
-        const programText = `🔔 *RAPPEL DU PROGRAMME DU WEEK-END* ⛪\n\n` + getMonthlyProgramText();
-        try {
-            await sock.sendMessage(GROUP_ID, { text: programText });
-            console.log('✅ Rappel du week-end envoyé');
-        } catch (err) {
-            console.error('Erreur rappel programme:', err);
-        }
-    }
+    if (isConnected && sock) await sock.sendMessage(GROUP_ID, { text: `🔔 *PROGRAMME WEEK-END* ⛪\n\n${getMonthlyProgramText()}` });
 }, { timezone: "Africa/Abidjan" });
 
-cron.schedule('0 16 * * 6', async () => {
-    if (isConnected && sock) {
-        try {
-            await sock.sendMessage(GROUP_ID, { text: cotisationsMessage });
-            console.log('✅ Rappel cotisation du samedi envoyé');
-        } catch (err) {
-            console.error('Erreur rappel samedi:', err);
-        }
-    }
-}, { timezone: "Africa/Abidjan" });
+cron.schedule('0 16 * * 6', async () => { if (isConnected && sock) await sock.sendMessage(GROUP_ID, { text: cotisationsMessage }); }, { timezone: "Africa/Abidjan" });
+cron.schedule('30 11 * * 0', async () => { if (isConnected && sock) await sock.sendMessage(GROUP_ID, { text: cotisationsMessage }); }, { timezone: "Africa/Abidjan" });
 
-cron.schedule('30 11 * * 0', async () => {
-    if (isConnected && sock) {
-        try {
-            await sock.sendMessage(GROUP_ID, { text: cotisationsMessage });
-            console.log('✅ Rappel cotisation du dimanche envoyé');
-        } catch (err) {
-            console.error('Erreur rappel dimanche:', err);
-        }
-    }
-}, { timezone: "Africa/Abidjan" });
-
-// Serveur Web
 app.get('/', (req, res) => {
-    if (isConnected) {
-        res.send(`
-            <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                <h1 style="color:green;">✅ Bot connecté avec succès !</h1>
-                <p>Hbot1 est actif, synchronisé avec Firebase et propulsé par Gemini 1.5 Flash.</p>
-            </div>
-        `);
-    } else if (qrCodeData) {
-        res.send(`
-            <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                <h1>Scannez le QR Code pour connecter le bot :</h1>
-                <img src="${qrCodeData}" alt="QR Code" />
-            </div>
-        `);
-    } else {
-        res.send(`
-            <div style="text-align:center; padding:50px; font-family:sans-serif;">
-                <h1>Initialisation du bot en cours...</h1>
-                <p>Veuillez rafraîchir la page dans quelques secondes.</p>
-            </div>
-        `);
-    }
+    if (isConnected) res.send(`<div style="text-align:center;padding:40px;font-family:sans-serif"><h1 style="color:green">✅ Hbot1 Connecté</h1><p>Parle de tout + Gemini 2.0 Flash</p><p>!verset |!id |!programme |!cotisation</p></div>`);
+    else if (qrCodeData) res.send(`<div style="text-align:center;padding:40px;font-family:sans-serif"><h1>Scanne ce QR</h1><img src="${qrCodeData}"/><p>Actualise après scan</p></div>`);
+    else res.send(`<h1>Initialisation...</h1>`);
 });
 
-app.listen(PORT, () => {
-    console.log(`Serveur démarré sur le port ${PORT}`);
-    connectToWhatsApp();
-});
+app.listen(PORT, () => { console.log(`Serveur ${PORT}`); connectToWhatsApp(); });
