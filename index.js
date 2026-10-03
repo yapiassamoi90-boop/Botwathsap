@@ -3,7 +3,7 @@ const express = require('express');
 const cron = require('node-cron');
 const QRCode = require('qrcode');
 const admin = require('firebase-admin');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenAI } = require('google-genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -205,7 +205,6 @@ Que le Seigneur vous bénisse ! 🙏✨`;
         }
 
         // 2. LOGIQUE INTELLIGENTE (Mode Gemini)
-        // En privé : il répond à tout. En groupe : il ne répond que si on le mentionne ou qu'on tape "hbot"
         const isMentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user.id) || 
                             lowerText.includes('hbot');
 
@@ -213,14 +212,12 @@ Que le Seigneur vous bénisse ! 🙏✨`;
             try {
                 await sock.sendPresenceUpdate('composing', remoteJid);
 
-                // Personnalité contextuelle selon le groupe
                 let systemInstruction = "Tu es Hbot1, un assistant virtuel intelligent, courtois, et constructif.";
                 
                 if (remoteJid === '22567647800-1546850208@g.us') {
                     systemInstruction = "Tu es Hbot1, l'assistant virtuel intelligent d'un groupe musical d'église (Assemblées de Dieu). Tu aides avec sagesse, tu donnes ton avis constructif sur les sujets abordés, tu encourages l'unité, le sérieux dans le service chrétien, et tu as un ton respectueux, fraternel et inspirant.";
                 }
 
-                // Appel à l'IA Gemini
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash',
                     contents: textMessage,
