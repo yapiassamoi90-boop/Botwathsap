@@ -10,6 +10,7 @@ import express from 'express';
 import cron from 'node-cron';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import admin from 'firebase-admin';
+import { readFileSync, existsSync } from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,19 +24,17 @@ const ID_GROUPE_WHATSAPP = "22567647800-1546850208@g.us";
 // --- FIREBASE ---
 if (!admin.apps.length) {
     try {
-        if (process.env.FIREBASE_PRIVATE_KEY) {
-            admin.initializeApp({
-                credential: admin.credential.cert({
-                    projectId: process.env.FIREBASE_PROJECT_ID || "registre-eglise",
-                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-                    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-                })
-            });
-        } else {
-            admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccountKey.json')) });
+        const secretPath = '/etc/secrets/serviceAccountKey.json';
+        if (existsSync(secretPath)) {
+            const serviceAccount = JSON.parse(readFileSync(secretPath, 'utf8'));
+            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+            console.log("✅ Firebase OK (via Secret File Render)");
+        } else if (existsSync('./serviceAccountKey.json')) {
+            const serviceAccount = JSON.parse(readFileSync('./serviceAccountKey.json', 'utf8'));
+            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+            console.log("✅ Firebase OK (local)");
         }
-        console.log("✅ Firebase OK");
-    } catch (e) { console.error("⚠️ Firebase error:", e.message); }
+    } catch (e) { console.error("⚠️️ Firebase error:", e.message); }
 }
 const db = admin.apps.length ? admin.firestore() : null;
 
