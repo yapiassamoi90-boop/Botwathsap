@@ -7,11 +7,11 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.20",
     "express": "^4.21.0",
     "firebase-admin": "^12.4.0",
+    "groq-sdk": "^0.1.0",
     "node-cron": "^3.0.3",
     "pino": "^9.0.0",
     "qrcode": "^1.5.4"
