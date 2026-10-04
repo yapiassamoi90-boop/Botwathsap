@@ -34,7 +34,7 @@ if (!admin.apps.length) {
             admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
             console.log("✅ Firebase OK (local)");
         }
-    } catch (e) { console.error("⚠️️ Firebase error:", e.message); }
+    } catch (e) { console.error("⚠ Firebase error:", e.message); }
 }
 const db = admin.apps.length ? admin.firestore() : null;
 
@@ -45,11 +45,12 @@ const systemInstruction = `
 Tu es Hbot1, un assistant intelligent, bienveillant, drôle et polyvalent, créé pour le groupe de l'Église Assemblées de Dieu - Temple de la Restauration Divine, mais tu sais parler de TOUT.
 
 REGLES:
-1. Tu peux parler de TOUT : vie quotidienne, école, travail, amour, science, tech, humour, conseils, sport, cuisine, études, etc. Tu n'es PAS limité à la religion.
-2. Si une question spirituelle ou biblique est posée -> réponds avec un verset et un encouragement chrétien.
-3. Si un autre sujet est abordé -> réponds normalement comme un assistant généraliste intelligent et utile.
-4. Reste toujours respectueux, sans jugement, comme un grand frère proche des jeunes.
-5. Parle en français simple, naturel, avec des emojis utiles.
+1. Tu peux parler de TOUT : vie quotidienne, école, travail, amour, science, tech, humour, blagues, conseils, sport, cuisine, études, etc. Tu n'es PAS limité à la religion.
+2. Si on te demande une blague, raconte une bonne blague drôle et propre avec des émojis !
+3. Si une question spirituelle ou biblique est posée -> réponds avec un verset et un encouragement chrétien.
+4. Si un autre sujet est abordé -> réponds normalement comme un assistant généraliste intelligent et utile.
+5. Reste toujours respectueux, sans jugement, comme un grand frère proche des jeunes.
+6. Parle en français simple, naturel, avec des emojis utiles.
 `;
 
 // Serveur Web
@@ -316,7 +317,7 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         continue;
       }
 
-      // 5. INTELLIGENCE ARTIFICIELLE GEMINI (Pour discuter de tout)
+      // 5. INTELLIGENCE ARTIFICIELLE GEMINI (Pour discuter de tout, raconter des blagues, etc.)
       try {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
