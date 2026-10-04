@@ -153,7 +153,7 @@ function isFirstOrLastFriday(date) {
 async function envoyerVersetMatinal() {
   if (!isConnected || !sockInstance) return;
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const prompt = "Génère un court verset biblique inspirant du jour suivi d'un très bref encouragement (max 4 lignes) pour bien commencer la journée.";
     const result = await model.generateContent(prompt);
     const versetMsg = `🌅 *MÉDITATION DU MATIN* ☀️\n\n${result.response.text()}\n\nExcellente journée à tous ! 🙏✨`;
@@ -322,7 +322,7 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
 
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         const fullPrompt = `${systemInstruction}\n\nUtilisateur dit: ${textMessage}\nRéponds de façon naturelle, utile et amicale.`;
         
         const result = await model.generateContent(fullPrompt);
