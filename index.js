@@ -38,7 +38,7 @@ if (!admin.apps.length) {
 }
 const db = admin.apps.length? admin.firestore() : null;
 
-// --- META AI (Llama 3.3 via Groq) - REMPLACE GEMINI ---
+// --- META AI (Llama 3.1 via Groq) ---
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const systemInstruction = `
@@ -56,7 +56,7 @@ REGLES:
 async function genererIA(promptUtilisateur) {
   try {
     const chat = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       messages: [
         { role: "system", content: systemInstruction },
         { role: "user", content: promptUtilisateur }
@@ -155,21 +155,18 @@ async function getCotisationsReport() {
     } catch (e) { return `❌ Erreur Firebase: ${e.message}`; }
 }
 
-const cotisationsMessage = `💰 *RAPPEL COTISATION* 🎵\n\n🪙 100 FCFA chaque dimanche pour le studio & l'agapé!\n👔 Prenons soin de nos uniformes et de notre groupe.\n🤝 Demeurons unis!\n\nTape!cotisation pour voir les paiements.\n*Psaumes 133:1* 🙏`;
+const cotisationsMessage = `💰 *RAPPEL COTISATION* 🎵\n\n🪙 100 FCFA chaque dimanche pour le studio & l'agapé!\n👔 Prenons soin de nos uniformes et de notre groupe.\n🤝 Demeurons unis!\n\nTape !cotisation pour voir les paiements.\n*Psaumes 133:1* 🙏`;
 
-// Fonction pour détecter si c'est le 1er ou le dernier vendredi du mois (les 2 veillées)
 function isFirstOrLastFriday(date) {
     const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
     return date.getDate() <= 7 || date.getDate() > lastDay - 7;
 }
 
 // ==========================================
-// ⏰ PLANIFICATIONS AUTOMATIQUES (CRON) - INTACT
+// ⏰ PLANIFICATIONS AUTOMATIQUES (CRON)
 // ==========================================
-
-// 1. Verset biblique du matin (Tous les jours à 06h30)
 async function envoyerVersetMatinal() {
-  if (!isConnected ||!sockInstance) return;
+  if (!isConnected || !sockInstance) return;
   try {
     const prompt = "Génère un court verset biblique inspirant du jour suivi d'un très bref encouragement (max 4 lignes) pour bien commencer la journée.";
     const texte = await genererIA(prompt);
@@ -181,9 +178,8 @@ async function envoyerVersetMatinal() {
 }
 cron.schedule('30 6 * * *', () => { envoyerVersetMatinal(); }, { timezone: "Africa/Abidjan" });
 
-// 2. Rappel des veillées de répétition (Les vendredis à 14h00, uniquement si c'est le 1er ou le dernier vendredi du mois)
 async function envoyerRappelVeillee() {
-  if (!isConnected ||!sockInstance) return;
+  if (!isConnected || !sockInstance) return;
   if (isFirstOrLastFriday(new Date())) {
     const msgVeillee = `🌙 *RAPPEL VEILLÉE RÉPÉTITION CE SOIR!* 🎵\n\nVenez nombreux préparer nos cœurs et nos chants pour la gloire de Dieu! 🙏✨`;
     try {
@@ -194,9 +190,8 @@ async function envoyerRappelVeillee() {
 }
 cron.schedule('0 14 * * 5', () => { envoyerRappelVeillee(); }, { timezone: "Africa/Abidjan" });
 
-// 3. Rappel du programme du week-end (Les vendredis et samedis à 14h00)
 async function envoyerRappelProgramme() {
-  if (!isConnected ||!sockInstance) return;
+  if (!isConnected || !sockInstance) return;
   const messageRappel = `🔔 *PROGRAMME WEEK-END* ⛪\n\n${getProgrammeDuDimanche()}`;
   try {
     await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: messageRappel });
@@ -205,7 +200,6 @@ async function envoyerRappelProgramme() {
 }
 cron.schedule('0 14 * * 5,6', () => { envoyerRappelProgramme(); }, { timezone: "Africa/Abidjan" });
 
-// 4. Rappels cotisations (Samedis à 16h00 et Dimanches à 11h30)
 cron.schedule('0 16 * * 6', async () => {
   if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage });
 }, { timezone: "Africa/Abidjan" });
@@ -215,7 +209,7 @@ cron.schedule('30 11 * * 0', async () => {
 }, { timezone: "Africa/Abidjan" });
 
 // ==========================================
-// 🤖 CONNEXION WHATSAPP & MESSAGES - INTACT
+// 🤖 CONNEXION WHATSAPP & MESSAGES
 // ==========================================
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -241,7 +235,7 @@ async function connectToWhatsApp() {
     if (connection === 'close') {
       isConnected = false;
       const shouldReconnect =
-        (lastDisconnect?.error instanceof Boom)?.output?.statusCode!== DisconnectReason.loggedOut;
+        (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
       if (shouldReconnect) connectToWhatsApp();
     } else if (connection === 'open') {
       isConnected = true;
@@ -251,10 +245,10 @@ async function connectToWhatsApp() {
   });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type!== 'notify') return;
+    if (type !== 'notify') return;
 
     for (const msg of messages) {
-      if (msg.key.fromMe ||!msg.message) continue;
+      if (msg.key.fromMe || !msg.message) continue;
 
       const remoteJid = msg.key.remoteJid;
       const isGroup = remoteJid.endsWith('@g.us');
@@ -269,13 +263,11 @@ async function connectToWhatsApp() {
       const lowerText = textMessage.trim().toLowerCase();
       if (!textMessage) continue;
 
-      // 1. Commande ID
       if (lowerText === '!id') {
         await sock.sendMessage(remoteJid, { text: `L'ID de cette discussion est :\n\`${remoteJid}\`` }, { quoted: msg });
         continue;
       }
 
-      // 2. Commande Aide / Présentation
       if (lowerText.includes('qui est hbot') || lowerText === 'hbot' || lowerText === '!help' || lowerText === '!aide') {
         const help = `🤖 *Je suis Hbot1, ton grand frère assistant!*
 
@@ -287,16 +279,15 @@ Je peux parler de TOUT avec toi:
 😂 Blagues, humour
 
 💡 *Commandes:*
-•!programme -> chantres du dimanche / planning
-•!cotisation -> voir les derniers paiements
-•!id -> voir l'ID du groupe
+• !programme -> chantres du dimanche / planning
+• !cotisation -> voir les derniers paiements
+• !id -> voir l'ID du groupe
 
 Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         await sock.sendMessage(remoteJid, { text: help }, { quoted: msg });
         continue;
       }
 
-      // 3. Commande Cotisation
       if (lowerText === '!cotisation' || lowerText === '!cotisations' || lowerText === '!c') {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
@@ -305,7 +296,6 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         continue;
       }
 
-      // 4. Commandes Programme
       if (lowerText === '!programme' || lowerText === '!programme mois' || lowerText === '!p') {
         await sock.sendMessage(remoteJid, { text: getProgrammeDuDimanche() }, { quoted: msg });
         continue;
@@ -334,7 +324,6 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         continue;
       }
 
-      // 5. INTELLIGENCE ARTIFICIELLE META AI
       try {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
