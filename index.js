@@ -9,6 +9,7 @@ import pino from 'pino';
 import express from 'express';
 import cron from 'node-cron';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import admin from 'firebase-admin';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,8 +20,26 @@ let sockInstance = null;
 
 const ID_GROUPE_WHATSAPP = "22567647800-1546850208@g.us";
 
-// --- CONFIGURATION GEMINI ---
-// Utilise la clé API configurée dans tes variables d'environnement sur Render
+// --- FIREBASE ---
+if (!admin.apps.length) {
+    try {
+        if (process.env.FIREBASE_PRIVATE_KEY) {
+            admin.initializeApp({
+                credential: admin.credential.cert({
+                    projectId: process.env.FIREBASE_PROJECT_ID || "registre-eglise",
+                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+                    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+                })
+            });
+        } else {
+            admin.initializeApp({ credential: admin.credential.cert(require('./serviceAccountKey.json')) });
+        }
+        console.log("✅ Firebase OK");
+    } catch (e) { console.error("⚠️ Firebase error:", e.message); }
+}
+const db = admin.apps.length ? admin.firestore() : null;
+
+// --- GEMINI ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const systemInstruction = `
@@ -40,7 +59,7 @@ app.get('/', async (req, res) => {
     return res.send(`
       <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
         <h1 style="color:green;">✅ Hbot1 Connecté et Opérationnel !</h1>
-        <p>Le bot WhatsApp gère le programme et l'IA Gemini avec succès.</p>
+        <p>Le bot WhatsApp gère le programme, les cotisations, les veillées et l'IA Gemini avec succès.</p>
       </div>
     `);
   }
@@ -68,7 +87,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 🤖 PROGRAMME DE L'ÉGLISE
+// 🤖 PROGRAMME DE L'ÉGLISE & COTISATIONS
 // ==========================================
 let texteProgrammeMois = `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
 
@@ -84,10 +103,8 @@ let texteProgrammeMois = `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RE
 • *18/10/26* : Adoration: Joanne | Célébration: Nancy | 2e Offrande: Evodie
 • *25/10/26* : Adoration: Ange/Marina | Célébration: Bérénice | 2e Offrande: Mme M'Bro`;
 
-// Fonction intelligente pour trouver le programme du dimanche en cours
 function getProgrammeDuDimanche() {
   const aujourdHui = new Date();
-  
   const jour = String(aujourdHui.getDate()).padStart(2, '0');
   const mois = String(aujourdHui.getMonth() + 1).padStart(2, '0');
   const annee = String(aujourdHui.getFullYear()).slice(-2);
@@ -100,44 +117,88 @@ function getProgrammeDuDimanche() {
     return `🗓️ *PROGRAMME DE CE DIMANCHE (${dateStr})* ⛪\n\n${ligneTrouvee}\n\nQue Dieu vous bénisse ! 🙏`;
   }
 
-  return `⛪ *PROGRAMME ACTUEL (Aucun événement spécifique repéré aujourd'hui)* 📅\n\n${texteProgrammeMois}`;
+  return `⛪ *PROGRAMME ACTUEL* 📅\n\n${texteProgrammeMois}`;
 }
 
-// Fonction pour envoyer le rappel automatique
+async function getCotisationsReport() {
+    if (!db) return "❌ Firebase non disponible pour le moment.";
+    try {
+        const snap = await db.collection("transactions").orderBy("timestamp", "desc").limit(5).get();
+        if (snap.empty) return `🟢 Aucun paiement récent enregistré.\n\n💡 Rappel : Cotisation 100F chaque dimanche pour le studio & l'agapé.`;
+        let out = `📊 *DERNIERS PAIEMENTS COTISATIONS* 🪙\n\n`;
+        snap.forEach(d => {
+            const x = d.data();
+            const name = x.name || x.memberName || "Membre";
+            const amount = x.amount || x.montant || "500";
+            const dt = x.timestamp?.toDate ? x.timestamp.toDate() : new Date(x.timestamp || Date.now());
+            out += `✅ *${name}* : +${amount} FCFA _(${dt.toLocaleString('fr-FR')})_\n`;
+        });
+        return out + "\n💡 Merci pour votre fidélité ! 🙏✨";
+    } catch (e) { return `❌ Erreur Firebase: ${e.message}`; }
+}
+
+const cotisationsMessage = `💰 *RAPPEL COTISATION* 🎵\n\n🪙 100 FCFA chaque dimanche pour le studio & l'agapé !\n👔 Prenons soin de nos uniformes et de notre groupe.\n🤝 Demeurons unis !\n\nTape !cotisation pour voir les paiements.\n*Psaumes 133:1* 🙏`;
+
+// Fonction pour détecter si c'est le 1er ou le dernier vendredi du mois (les 2 veillées)
+function isFirstOrLastFriday(date) {
+    const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    return date.getDate() <= 7 || date.getDate() > lastDay - 7;
+}
+
+// ==========================================
+// ⏰ PLANIFICATIONS AUTOMATIQUES (CRON)
+// ==========================================
+
+// 1. Verset biblique du matin (Tous les jours à 06h30)
+async function envoyerVersetMatinal() {
+  if (!isConnected || !sockInstance) return;
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const prompt = "Génère un court verset biblique inspirant du jour suivi d'un très bref encouragement (max 4 lignes) pour bien commencer la journée.";
+    const result = await model.generateContent(prompt);
+    const versetMsg = `🌅 *MÉDITATION DU MATIN* ☀️\n\n${result.response.text()}\n\nExcellente journée à tous ! 🙏✨`;
+    
+    await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: versetMsg });
+    console.log("✅ Verset matinal envoyé !");
+  } catch (err) { console.error("❌ Erreur verset matinal :", err); }
+}
+cron.schedule('30 6 * * *', () => { envoyerVersetMatinal(); }, { timezone: "Africa/Abidjan" });
+
+// 2. Rappel des veillées de répétition (Les vendredis à 14h00, uniquement si c'est le 1er ou le dernier vendredi du mois)
+async function envoyerRappelVeillee() {
+  if (!isConnected || !sockInstance) return;
+  if (isFirstOrLastFriday(new Date())) {
+    const msgVeillee = `🌙 *RAPPEL VEILLÉE RÉPÉTITION CE SOIR!* 🎵\n\nVenez nombreux préparer nos cœurs et nos chants pour la gloire de Dieu ! 🙏✨`;
+    try {
+      await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: msgVeillee });
+      console.log("✅ Rappel de veillée envoyé !");
+    } catch (err) { console.error("❌ Erreur rappel veillée :", err); }
+  }
+}
+cron.schedule('0 14 * * 5', () => { envoyerRappelVeillee(); }, { timezone: "Africa/Abidjan" });
+
+// 3. Rappel du programme du week-end (Les vendredis et samedis à 14h00)
 async function envoyerRappelProgramme() {
-  if (!isConnected || !sockInstance) {
-    console.log("⚠️ Impossible d'envoyer le rappel : le bot n'est pas connecté.");
-    return;
-  }
-
-  if (ID_GROUPE_WHATSAPP === "VOTRE_ID_DE_GROUPE_ICI@g.us") {
-    console.log("⚠️ Veuillez configurer l'ID de votre groupe WhatsApp dans index.js.");
-    return;
-  }
-
-  const messageRappel = `📢 *RAPPEL DU PROGRAMME DE CE DIMANCHE* 📢\n\n${getProgrammeDuDimanche()}`;
-
+  if (!isConnected || !sockInstance) return;
+  const messageRappel = `🔔 *PROGRAMME WEEK-END* ⛪\n\n${getProgrammeDuDimanche()}`;
   try {
     await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: messageRappel });
-    console.log("✅ Rappel de programme envoyé au groupe avec succès !");
-  } catch (err) {
-    console.error("❌ Erreur lors de l'envoi du rappel :", err);
-  }
+    console.log("✅ Rappel programme envoyé !");
+  } catch (err) { console.error("❌ Erreur rappel programme :", err); }
 }
+cron.schedule('0 14 * * 5,6', () => { envoyerRappelProgramme(); }, { timezone: "Africa/Abidjan" });
 
-// ⏰ PLANIFICATION (CRON)
-cron.schedule('0 14 * * 5', () => {
-  console.log('⏰ Exécution du rappel du vendredi 14h');
-  envoyerRappelProgramme();
+// 4. Rappels cotisations (Samedis à 16h00 et Dimanches à 11h30)
+cron.schedule('0 16 * * 6', async () => { 
+  if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage }); 
 }, { timezone: "Africa/Abidjan" });
 
-cron.schedule('0 14 * * 6', () => {
-  console.log('⏰ Exécution du samedi 14h');
-  envoyerRappelProgramme();
+cron.schedule('30 11 * * 0', async () => { 
+  if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage }); 
 }, { timezone: "Africa/Abidjan" });
 
 // ==========================================
-// 🤖 CONNEXION WHATSAPP & GESTION DES MESSAGES
+// 🤖 CONNEXION WHATSAPP & MESSAGES
 // ==========================================
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -157,12 +218,7 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('📱 Nouveau QR Code généré.');
-      try {
-        currentQrImage = await QRCode.toDataURL(qr);
-      } catch (err) {
-        console.error('Erreur génération QR image :', err);
-      }
+      try { currentQrImage = await QRCode.toDataURL(qr); } catch (err) {}
     }
 
     if (connection === 'close') {
@@ -173,7 +229,7 @@ async function connectToWhatsApp() {
     } else if (connection === 'open') {
       isConnected = true;
       currentQrImage = null;
-      console.log('✅ Bot connecté avec succès !');
+      console.log('✅ Hbot1 connecté avec succès !');
     }
   });
 
@@ -196,13 +252,13 @@ async function connectToWhatsApp() {
       const lowerText = textMessage.trim().toLowerCase();
       if (!textMessage) continue;
 
-      // 1. Commande pour afficher l'ID du groupe
+      // 1. Commande ID
       if (lowerText === '!id') {
         await sock.sendMessage(remoteJid, { text: `L'ID de cette discussion est :\n\`${remoteJid}\`` }, { quoted: msg });
         continue;
       }
 
-      // 2. Commande de présentation Hbot1
+      // 2. Commande Aide / Présentation
       if (lowerText.includes('qui est hbot') || lowerText === 'hbot' || lowerText === '!help' || lowerText === '!aide') {
         const help = `🤖 *Je suis Hbot1, ton grand frère assistant!*
 
@@ -215,7 +271,7 @@ Je peux parler de TOUT avec toi:
 
 💡 *Commandes:*
 • !programme -> chantres du dimanche / planning
-• !programme complet -> tout le mois
+• !cotisation -> voir les derniers paiements
 • !id -> voir l'ID du groupe
 
 Pose-moi n'importe quelle question, je suis là! 🙏✨`;
@@ -223,7 +279,16 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         continue;
       }
 
-      // 3. Commandes de consultation et de modification du programme
+      // 3. Commande Cotisation
+      if (lowerText === '!cotisation' || lowerText === '!cotisations' || lowerText === '!c') {
+        await sock.presenceSubscribe(remoteJid);
+        await sock.sendPresenceUpdate('composing', remoteJid);
+        const report = await getCotisationsReport();
+        await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
+        continue;
+      }
+
+      // 4. Commandes Programme
       if (lowerText === '!programme' || lowerText === '!programme mois' || lowerText === '!p') {
         await sock.sendMessage(remoteJid, { text: getProgrammeDuDimanche() }, { quoted: msg });
         continue;
@@ -252,7 +317,7 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         continue;
       }
 
-      // 4. INTELLIGENCE ARTIFICIELLE GEMINI (Répond à tout le reste si on le sollicite)
+      // 5. INTELLIGENCE ARTIFICIELLE GEMINI (Pour discuter de tout)
       try {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
@@ -267,7 +332,6 @@ Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
       } catch (err) {
         console.error("❌ Erreur Gemini :", err.message);
-        // On ne bloque pas le bot si l'IA rencontre un petit souci technique passager
       }
     }
   });
