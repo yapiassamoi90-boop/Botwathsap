@@ -8,7 +8,7 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import express from 'express';
 import cron from 'node-cron';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import admin from 'firebase-admin';
 import { readFileSync, existsSync } from 'fs';
 
@@ -38,24 +38,8 @@ if (!admin.apps.length) {
 }
 const db = admin.apps.length? admin.firestore() : null;
 
-// --- GEMINI - NOUVEAUX MODELES 2026 ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// Liste officielle de remplacement: 2.0 -> 3.5-flash / 3.8-flash
-const LISTE_MODELES = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
-
-async function genererIA(promptComplet) {
-  for (const nom of LISTE_MODELES) {
-    try {
-      const model = genAI.getGenerativeModel({ model: nom });
-      const result = await model.generateContent(promptComplet);
-      console.log(`✅ Gemini OK avec ${nom}`);
-      return result.response.text();
-    } catch (err) {
-      console.log(`⚠️ ${nom} échoué: ${err.message.substring(0,100)}`);
-    }
-  }
-  throw new Error("Tous les modèles Gemini échoués");
-}
+// --- META AI (Llama 3.3 via Groq) - REMPLACE GEMINI ---
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const systemInstruction = `
 Tu es Hbot1, un assistant intelligent, bienveillant, drôle et polyvalent, créé pour le groupe de l'Église Assemblées de Dieu - Temple de la Restauration Divine, mais tu sais parler de TOUT.
@@ -69,16 +53,35 @@ REGLES:
 6. Parle en français simple, naturel, avec des emojis utiles.
 `;
 
+async function genererIA(promptUtilisateur) {
+  try {
+    const chat = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: promptUtilisateur }
+      ],
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+    return chat.choices[0]?.message?.content || "Je n'ai pas bien saisi, peux-tu reformuler? 🙏";
+  } catch (err) {
+    console.error("❌ Erreur Meta AI:", err.message);
+    throw err;
+  }
+}
+
 // Serveur Web
 app.get('/', async (req, res) => {
   if (isConnected) {
     return res.send(`
       <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
         <h1 style="color:green;">✅ Hbot1 Connecté et Opérationnel!</h1>
-        <p>Le bot WhatsApp gère le programme, les cotisations, les veillées et l'IA Gemini avec succès.</p>
+        <p>Le bot WhatsApp gère le programme, les cotisations, les veillées et l'IA Meta AI avec succès.</p>
       </div>
     `);
   }
+
   if (currentQrImage) {
     return res.send(`
       <div style="text-align:center; font-family:sans-serif; padding-top:30px;">
@@ -88,6 +91,7 @@ app.get('/', async (req, res) => {
       </div>
     `);
   }
+
   res.send(`
     <div style="text-align:center; font-family:sans-serif; padding-top:50px;">
       <h2>⏳ Génération du QR Code en cours...</h2>
@@ -101,7 +105,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 🤖 PROGRAMME DE L'ÉGLISE & COTISATIONS
+// 🤖 PROGRAMME DE L'ÉGLISE & COTISATIONS - INTACT
 // ==========================================
 let texteProgrammeMois = `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
 
@@ -123,11 +127,14 @@ function getProgrammeDuDimanche() {
   const mois = String(aujourdHui.getMonth() + 1).padStart(2, '0');
   const annee = String(aujourdHui.getFullYear()).slice(-2);
   const dateStr = `${jour}/${mois}/${annee}`;
+
   const lignes = texteProgrammeMois.split('\n');
   const ligneTrouvee = lignes.find(ligne => ligne.includes(dateStr));
+
   if (ligneTrouvee) {
     return `🗓️ *PROGRAMME DE CE DIMANCHE (${dateStr})* ⛪\n\n${ligneTrouvee}\n\nQue Dieu vous bénisse! 🙏`;
   }
+
   return `⛪ *PROGRAMME ACTUEL* 📅\n\n${texteProgrammeMois}`;
 }
 
@@ -150,26 +157,31 @@ async function getCotisationsReport() {
 
 const cotisationsMessage = `💰 *RAPPEL COTISATION* 🎵\n\n🪙 100 FCFA chaque dimanche pour le studio & l'agapé!\n👔 Prenons soin de nos uniformes et de notre groupe.\n🤝 Demeurons unis!\n\nTape!cotisation pour voir les paiements.\n*Psaumes 133:1* 🙏`;
 
+// Fonction pour détecter si c'est le 1er ou le dernier vendredi du mois (les 2 veillées)
 function isFirstOrLastFriday(date) {
     const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
     return date.getDate() <= 7 || date.getDate() > lastDay - 7;
 }
 
 // ==========================================
-// ⏰ PLANIFICATIONS AUTOMATIQUES (CRON)
+// ⏰ PLANIFICATIONS AUTOMATIQUES (CRON) - INTACT
 // ==========================================
+
+// 1. Verset biblique du matin (Tous les jours à 06h30)
 async function envoyerVersetMatinal() {
   if (!isConnected ||!sockInstance) return;
   try {
     const prompt = "Génère un court verset biblique inspirant du jour suivi d'un très bref encouragement (max 4 lignes) pour bien commencer la journée.";
     const texte = await genererIA(prompt);
     const versetMsg = `🌅 *MÉDITATION DU MATIN* ☀️\n\n${texte}\n\nExcellente journée à tous! 🙏✨`;
+
     await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: versetMsg });
     console.log("✅ Verset matinal envoyé!");
   } catch (err) { console.error("❌ Erreur verset matinal :", err.message); }
 }
 cron.schedule('30 6 * * *', () => { envoyerVersetMatinal(); }, { timezone: "Africa/Abidjan" });
 
+// 2. Rappel des veillées de répétition (Les vendredis à 14h00, uniquement si c'est le 1er ou le dernier vendredi du mois)
 async function envoyerRappelVeillee() {
   if (!isConnected ||!sockInstance) return;
   if (isFirstOrLastFriday(new Date())) {
@@ -182,6 +194,7 @@ async function envoyerRappelVeillee() {
 }
 cron.schedule('0 14 * * 5', () => { envoyerRappelVeillee(); }, { timezone: "Africa/Abidjan" });
 
+// 3. Rappel du programme du week-end (Les vendredis et samedis à 14h00)
 async function envoyerRappelProgramme() {
   if (!isConnected ||!sockInstance) return;
   const messageRappel = `🔔 *PROGRAMME WEEK-END* ⛪\n\n${getProgrammeDuDimanche()}`;
@@ -192,6 +205,7 @@ async function envoyerRappelProgramme() {
 }
 cron.schedule('0 14 * * 5,6', () => { envoyerRappelProgramme(); }, { timezone: "Africa/Abidjan" });
 
+// 4. Rappels cotisations (Samedis à 16h00 et Dimanches à 11h30)
 cron.schedule('0 16 * * 6', async () => {
   if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage });
 }, { timezone: "Africa/Abidjan" });
@@ -201,20 +215,33 @@ cron.schedule('30 11 * * 0', async () => {
 }, { timezone: "Africa/Abidjan" });
 
 // ==========================================
-// 🤖 CONNEXION WHATSAPP & MESSAGES
+// 🤖 CONNEXION WHATSAPP & MESSAGES - INTACT
 // ==========================================
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
-  const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }) });
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' })
+  });
+
   sockInstance = sock;
+
   sock.ev.on('creds.update', saveCreds);
+
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
-    if (qr) { try { currentQrImage = await QRCode.toDataURL(qr); } catch (err) {} }
+
+    if (qr) {
+      try { currentQrImage = await QRCode.toDataURL(qr); } catch (err) {}
+    }
+
     if (connection === 'close') {
       isConnected = false;
-      const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode!== DisconnectReason.loggedOut;
+      const shouldReconnect =
+        (lastDisconnect?.error instanceof Boom)?.output?.statusCode!== DisconnectReason.loggedOut;
       if (shouldReconnect) connectToWhatsApp();
     } else if (connection === 'open') {
       isConnected = true;
@@ -222,26 +249,54 @@ async function connectToWhatsApp() {
       console.log('✅ Hbot1 connecté avec succès!');
     }
   });
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type!== 'notify') return;
+
     for (const msg of messages) {
       if (msg.key.fromMe ||!msg.message) continue;
+
       const remoteJid = msg.key.remoteJid;
       const isGroup = remoteJid.endsWith('@g.us');
       const sender = msg.key.participant || msg.key.remoteJid;
-      const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
+
+      const textMessage =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        '';
+
       const lowerText = textMessage.trim().toLowerCase();
       if (!textMessage) continue;
 
+      // 1. Commande ID
       if (lowerText === '!id') {
         await sock.sendMessage(remoteJid, { text: `L'ID de cette discussion est :\n\`${remoteJid}\`` }, { quoted: msg });
         continue;
       }
+
+      // 2. Commande Aide / Présentation
       if (lowerText.includes('qui est hbot') || lowerText === 'hbot' || lowerText === '!help' || lowerText === '!aide') {
-        const help = `🤖 *Je suis Hbot1, ton grand frère assistant!*\n\nJe peux parler de TOUT avec toi:\n🧠 Cours, devoirs, science, tech\n❤️ Conseils vie, amour, amitié\n🍛 Cuisine, sport, musique\n📖 Bible, prière, versets\n😂 Blagues, humour\n\n💡 *Commandes:*\n•!programme -> chantres du dimanche / planning\n•!cotisation -> voir les derniers paiements\n•!id -> voir l'ID du groupe\n\nPose-moi n'importe quelle question, je suis là! 🙏✨`;
+        const help = `🤖 *Je suis Hbot1, ton grand frère assistant!*
+
+Je peux parler de TOUT avec toi:
+🧠 Cours, devoirs, science, tech
+❤️ Conseils vie, amour, amitié
+🍛 Cuisine, sport, musique
+📖 Bible, prière, versets
+😂 Blagues, humour
+
+💡 *Commandes:*
+•!programme -> chantres du dimanche / planning
+•!cotisation -> voir les derniers paiements
+•!id -> voir l'ID du groupe
+
+Pose-moi n'importe quelle question, je suis là! 🙏✨`;
         await sock.sendMessage(remoteJid, { text: help }, { quoted: msg });
         continue;
       }
+
+      // 3. Commande Cotisation
       if (lowerText === '!cotisation' || lowerText === '!cotisations' || lowerText === '!c') {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
@@ -249,40 +304,50 @@ async function connectToWhatsApp() {
         await sock.sendMessage(remoteJid, { text: report }, { quoted: msg });
         continue;
       }
+
+      // 4. Commandes Programme
       if (lowerText === '!programme' || lowerText === '!programme mois' || lowerText === '!p') {
         await sock.sendMessage(remoteJid, { text: getProgrammeDuDimanche() }, { quoted: msg });
         continue;
       }
+
       if (lowerText === '!programme complet') {
         await sock.sendMessage(remoteJid, { text: texteProgrammeMois }, { quoted: msg });
         continue;
       }
+
       if (lowerText.startsWith('!setprogramme ')) {
         if (!isGroup) continue;
+
         const groupMetadata = await sock.groupMetadata(remoteJid);
-        const senderIsAdmin = groupMetadata.participants.some((p) => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin'));
+        const senderIsAdmin = groupMetadata.participants.some(
+          (p) => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin')
+        );
+
         if (!senderIsAdmin) {
           await sock.sendMessage(remoteJid, { text: "❌ Seuls les administrateurs peuvent modifier le programme." }, { quoted: msg });
           continue;
         }
+
         texteProgrammeMois = textMessage.replace('!setprogramme ', '').trim();
         await sock.sendMessage(remoteJid, { text: "✅ Le programme du mois a été mis à jour!" }, { quoted: msg });
         continue;
       }
 
-      // 5. INTELLIGENCE ARTIFICIELLE GEMINI
+      // 5. INTELLIGENCE ARTIFICIELLE META AI
       try {
         await sock.presenceSubscribe(remoteJid);
         await sock.sendPresenceUpdate('composing', remoteJid);
-        const fullPrompt = `${systemInstruction}\n\nUtilisateur dit: ${textMessage}\nRéponds de façon naturelle, utile et amicale.`;
-        const reply = await genererIA(fullPrompt);
+
+        const reply = await genererIA(textMessage);
         let finalReply = reply || "Je n'ai pas bien saisi, peux-tu reformuler? 🙏";
         if (finalReply.length > 3500) finalReply = finalReply.substring(0, 3500) + "\n...";
         await sock.sendMessage(remoteJid, { text: finalReply }, { quoted: msg });
       } catch (err) {
-        console.error("❌ Erreur Gemini :", err.message);
+        console.error("❌ Erreur Meta AI :", err.message);
       }
     }
   });
 }
+
 connectToWhatsApp();
