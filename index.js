@@ -38,7 +38,7 @@ if (!admin.apps.length) {
 }
 const db = admin.apps.length? admin.firestore() : null;
 
-// --- META AI (Llama 3.1 via Groq) ---
+// --- META AI (Llama 3 via Groq) ---
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const systemInstruction = `
@@ -56,7 +56,7 @@ REGLES:
 async function genererIA(promptUtilisateur) {
   try {
     const chat = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama3-70b-8192",
       messages: [
         { role: "system", content: systemInstruction },
         { role: "user", content: promptUtilisateur }
@@ -105,7 +105,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 🤖 PROGRAMME DE L'ÉGLISE & COTISATIONS - INTACT
+// 🤖 PROGRAMME DE L'ÉGLISE & COTISATIONS
 // ==========================================
 let texteProgrammeMois = `⛪ *ÉGLISE DES ASSEMBLÉES DE DIEU - TEMPLE DE LA RESTAURATION DIVINE*
 
@@ -206,6 +206,22 @@ cron.schedule('0 16 * * 6', async () => {
 
 cron.schedule('30 11 * * 0', async () => {
   if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage });
+}, { timezone: "Africa/Abidjan" });
+
+// Nouveau : Bilan automatique des cotisations chaque dimanche à 17h00
+async function envoyerRapportCotisationsDimanche() {
+  if (!isConnected || !sockInstance) return;
+  try {
+    const report = await getCotisationsReport();
+    const messageFinal = `📢 *BILAN DES COTISATIONS DU DIMANCHE (17H)* 🪙\n\n${report}`;
+    await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: messageFinal });
+    console.log("✅ Rapport automatique des cotisations envoyé !");
+  } catch (err) {
+    console.error("❌ Erreur rapport cotisations dimanche :", err.message);
+  }
+}
+cron.schedule('0 17 * * 0', () => { 
+  envoyerRapportCotisationsDimanche(); 
 }, { timezone: "Africa/Abidjan" });
 
 // ==========================================
