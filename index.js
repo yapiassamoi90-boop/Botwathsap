@@ -141,16 +141,36 @@ function getProgrammeDuDimanche() {
 async function getCotisationsReport() {
     if (!db) return "❌ Firebase non disponible pour le moment.";
     try {
-        const snap = await db.collection("transactions").orderBy("timestamp", "desc").limit(5).get();
+        const snap = await db.collection("transactions").limit(20).get();
         if (snap.empty) return `🟢 Aucun paiement récent enregistré.\n\n💡 Rappel : Cotisation 100F chaque dimanche pour le studio & l'agapé.`;
-        let out = `📊 *DERNIERS PAIEMENTS COTISATIONS* 🪙\n\n`;
+        
+        let transactions = [];
         snap.forEach(d => {
             const x = d.data();
             const name = x.name || x.memberName || "Membre";
             const amount = x.amount || x.montant || "500";
-            const dt = x.timestamp?.toDate? x.timestamp.toDate() : new Date(x.timestamp || Date.now());
-            out += `✅ *${name}* : +${amount} FCFA _(${dt.toLocaleString('fr-FR')})_\n`;
+            const dt = x.timestamp?.toDate ? x.timestamp.toDate() : new Date(x.timestamp || Date.now());
+            transactions.push({ name, amount, dt });
         });
+
+        // 1. Mettre Joanna en premier
+        let joannaTransactions = transactions.filter(t => t.name.toLowerCase().includes("joanna"));
+        let autresTransactions = transactions.filter(t => !t.name.toLowerCase().includes("joanna"));
+
+        // 2. Trier les autres du plus ancien au plus récent (les plus anciens en haut, les récents en bas)
+        autresTransactions.sort((a, b) => a.dt - b.dt);
+
+        let listeFinale = [...joannaTransactions, ...autresTransactions];
+
+        let out = `📊 *CLASSEMENT DES COTISATIONS* 🪙\n\n`;
+        let index = 1;
+
+        listeFinale.forEach(t => {
+            const badge = index === 1 ? "🥇" : "✅";
+            out += `${badge} *${t.name}* : +${t.amount} FCFA _(${t.dt.toLocaleString('fr-FR')})_\n`;
+            index++;
+        });
+
         return out + "\n💡 Merci pour votre fidélité! 🙏✨";
     } catch (e) { return `❌ Erreur Firebase: ${e.message}`; }
 }
