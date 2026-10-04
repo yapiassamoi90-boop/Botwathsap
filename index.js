@@ -208,19 +208,24 @@ cron.schedule('30 11 * * 0', async () => {
   if (isConnected && sockInstance) await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: cotisationsMessage });
 }, { timezone: "Africa/Abidjan" });
 
-// Nouveau : Bilan automatique des cotisations chaque dimanche à 17h00
+// Bilan automatique des cotisations chaque dimanche à 17h00 et 20h00
 async function envoyerRapportCotisationsDimanche() {
   if (!isConnected || !sockInstance) return;
   try {
     const report = await getCotisationsReport();
-    const messageFinal = `📢 *BILAN DES COTISATIONS DU DIMANCHE (17H)* 🪙\n\n${report}`;
+    const messageFinal = `📢 *BILAN DES COTISATIONS DU DIMANCHE* 🪙\n\n${report}`;
     await sockInstance.sendMessage(ID_GROUPE_WHATSAPP, { text: messageFinal });
     console.log("✅ Rapport automatique des cotisations envoyé !");
   } catch (err) {
     console.error("❌ Erreur rapport cotisations dimanche :", err.message);
   }
 }
+
 cron.schedule('0 17 * * 0', () => { 
+  envoyerRapportCotisationsDimanche(); 
+}, { timezone: "Africa/Abidjan" });
+
+cron.schedule('0 20 * * 0', () => { 
   envoyerRapportCotisationsDimanche(); 
 }, { timezone: "Africa/Abidjan" });
 
